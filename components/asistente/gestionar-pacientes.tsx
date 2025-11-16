@@ -14,14 +14,12 @@ export function GestionarPacientes() {
   const { toast } = useToast()
   const [pacientesNoReconocidos, setPacientesNoReconocidos] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [formData, setFormData] = useState({
     dni: "",
     nombre: "",
     apellido: "",
-    telefono: "",
     fechaNacimiento: "",
-    direccion: "",
   })
 
   useEffect(() => {
@@ -34,7 +32,7 @@ export function GestionarPacientes() {
     const { data, error } = await supabase
       .from("triaje")
       .select("*")
-      .is("paciente_id", null)
+      .is("id_paciente", null)
       .order("created_at", { ascending: false })
 
     if (!error && data) {
@@ -44,18 +42,16 @@ export function GestionarPacientes() {
   }
 
   const handleEdit = (paciente: any) => {
-    setEditingId(paciente.id)
+    setEditingId(paciente.id_triaje)
     setFormData({
       dni: "",
       nombre: paciente.nombre_temporal || "",
       apellido: "",
-      telefono: "",
       fechaNacimiento: "",
-      direccion: "",
     })
   }
 
-  const handleSave = async (triajeId: string) => {
+  const handleSave = async (triajeId: number) => {
     if (!formData.dni || !formData.nombre || !formData.apellido) {
       toast({
         title: "⚠️ Datos incompletos",
@@ -69,41 +65,65 @@ export function GestionarPacientes() {
 
     try {
       // Verificar si el paciente ya existe
-      const { data: existingUser } = await supabase.from("usuarios").select("*").eq("dni", formData.dni).single()
+      const { data: existingUser } = await supabase
+        .from("usuario")
+        .select("*")
+        .eq("dni", formData.dni)
+        .maybeSingle()
 
-      let pacienteId: string
+      let pacienteId: number
 
       if (existingUser) {
-        // Paciente ya existe
-        pacienteId = existingUser.id
+        // Paciente ya existe, verificar si tiene registro en tabla paciente
+        const { data: existingPaciente } = await supabase
+          .from("paciente")
+          .select("*")
+          .eq("id_paciente", existingUser.id_usuario)
+          .maybeSingle()
+
+        if (!existingPaciente) {
+          // Crear registro en tabla paciente
+          await supabase.from("paciente").insert({
+            id_paciente: existingUser.id_usuario,
+            dni: formData.dni,
+            fecha_nacimiento: formData.fechaNacimiento || null,
+          })
+        }
+        
+        pacienteId = existingUser.id_usuario
       } else {
+        // Crear nuevo usuario
         const { data: newUser, error: userError } = await supabase
-          .from("usuarios")
+          .from("usuario")
           .insert({
             dni: formData.dni,
-            password_hash: "temp_password_hash", // Contraseña temporal
+            password: "temporal123", // Contraseña temporal
             nombre: formData.nombre,
             apellido: formData.apellido,
-            telefono: formData.telefono,
-            fecha_nacimiento: formData.fechaNacimiento || null,
-            direccion: formData.direccion,
-            rol: "paciente",
-            tipo_asegurado: "no_asegurado", // Marcar como no asegurado
+            correo: `temp_${formData.dni}@temp.com`, // Email temporal
+            rol: "Paciente",
           })
           .select()
           .single()
 
         if (userError) throw userError
-        pacienteId = newUser.id
+        pacienteId = newUser.id_usuario
+
+        // Crear registro en tabla paciente
+        await supabase.from("paciente").insert({
+          id_paciente: pacienteId,
+          dni: formData.dni,
+          fecha_nacimiento: formData.fechaNacimiento || null,
+        })
       }
 
-      // Actualizar el triaje con el paciente_id
+      // Actualizar el triaje con el id_paciente
       const { error: triajeError } = await supabase
         .from("triaje")
         .update({
-          paciente_id: pacienteId,
+          id_paciente: pacienteId,
         })
-        .eq("id", triajeId)
+        .eq("id_triaje", triajeId)
 
       if (triajeError) throw triajeError
 
@@ -117,9 +137,7 @@ export function GestionarPacientes() {
         dni: "",
         nombre: "",
         apellido: "",
-        telefono: "",
         fechaNacimiento: "",
-        direccion: "",
       })
       loadPacientes()
     } catch (error) {
@@ -163,7 +181,7 @@ export function GestionarPacientes() {
         ) : (
           <div className="space-y-4">
             {pacientesNoReconocidos.map((paciente) => (
-              <div key={paciente.id} className="border rounded-lg p-4 space-y-4">
+              <div key={paciente.id_triaje} className="border rounded-lg p-4 space-y-4">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2 mb-2">
@@ -189,19 +207,19 @@ export function GestionarPacientes() {
                   </Badge>
                 </div>
 
-                {editingId === paciente.id ? (
+                {editingId === paciente.id_triaje ? (
                   <form
                     onSubmit={(e) => {
                       e.preventDefault()
-                      handleSave(paciente.id)
+                      handleSave(paciente.id_triaje)
                     }}
                     className="space-y-4 pt-4 border-t"
                   >
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor={`dni-${paciente.id}`}>DNI *</Label>
+                        <Label htmlFor={`dni-${paciente.id_triaje}`}>DNI *</Label>
                         <Input
-                          id={`dni-${paciente.id}`}
+                          id={`dni-${paciente.id_triaje}`}
                           placeholder="12345678"
                           maxLength={8}
                           value={formData.dni}
@@ -212,20 +230,20 @@ export function GestionarPacientes() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor={`telefono-${paciente.id}`}>Teléfono</Label>
+                        <Label htmlFor={`fechaNacimiento-${paciente.id_triaje}`}>Fecha de Nacimiento</Label>
                         <Input
-                          id={`telefono-${paciente.id}`}
-                          placeholder="987654321"
-                          value={formData.telefono}
-                          onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+                          id={`fechaNacimiento-${paciente.id_triaje}`}
+                          type="date"
+                          value={formData.fechaNacimiento}
+                          onChange={(e) => setFormData({ ...formData, fechaNacimiento: e.target.value })}
                           className="h-11"
                         />
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor={`nombre-${paciente.id}`}>Nombre *</Label>
+                        <Label htmlFor={`nombre-${paciente.id_triaje}`}>Nombre *</Label>
                         <Input
-                          id={`nombre-${paciente.id}`}
+                          id={`nombre-${paciente.id_triaje}`}
                           placeholder="Juan"
                           value={formData.nombre}
                           onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
@@ -235,35 +253,13 @@ export function GestionarPacientes() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor={`apellido-${paciente.id}`}>Apellido *</Label>
+                        <Label htmlFor={`apellido-${paciente.id_triaje}`}>Apellido *</Label>
                         <Input
-                          id={`apellido-${paciente.id}`}
+                          id={`apellido-${paciente.id_triaje}`}
                           placeholder="Pérez"
                           value={formData.apellido}
                           onChange={(e) => setFormData({ ...formData, apellido: e.target.value })}
                           required
-                          className="h-11"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor={`fechaNacimiento-${paciente.id}`}>Fecha de Nacimiento</Label>
-                        <Input
-                          id={`fechaNacimiento-${paciente.id}`}
-                          type="date"
-                          value={formData.fechaNacimiento}
-                          onChange={(e) => setFormData({ ...formData, fechaNacimiento: e.target.value })}
-                          className="h-11"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor={`direccion-${paciente.id}`}>Dirección</Label>
-                        <Input
-                          id={`direccion-${paciente.id}`}
-                          placeholder="Av. Principal 123"
-                          value={formData.direccion}
-                          onChange={(e) => setFormData({ ...formData, direccion: e.target.value })}
                           className="h-11"
                         />
                       </div>

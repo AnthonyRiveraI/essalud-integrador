@@ -23,47 +23,64 @@ export function HistorialesCompletos() {
   const loadHistorial = async () => {
     setLoading(true)
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("historial_clinico")
-      .select(
-        `
-        *,
-        paciente:usuarios!historial_clinico_paciente_id_fkey(id, nombre, apellido, dni),
-        medico:medicos!historial_clinico_medico_id_fkey(
-          usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido)
-        ),
-        especialidad:especialidades!historial_clinico_especialidad_id_fkey(nombre)
-      `,
-      )
-      .order("fecha", { ascending: false })
+    
+    // Cargar todos los historiales
+    const { data: historialData, error: historialError } = await supabase
+      .from("historialclinico")
+      .select("*")
       .limit(200)
 
-    if (!error && data) {
-      setHistorial(data)
+    if (historialError || !historialData) {
+      setLoading(false)
+      return
     }
+
+    // Obtener datos de pacientes y médicos para cada historial
+    const historialConDatos = await Promise.all(
+      historialData.map(async (registro) => {
+        const { data: pacienteData, error: pacienteError } = await supabase
+          .from("usuario")
+          .select("id_usuario, nombre, apellido, dni, correo")
+          .eq("id_usuario", registro.id_paciente)
+          .maybeSingle()
+
+        const { data: medicoData, error: medicoError } = await supabase
+          .from("usuario")
+          .select("id_usuario, nombre, apellido, correo")
+          .eq("id_usuario", registro.id_medico)
+          .maybeSingle()
+
+        const { data: medicoInfo } = await supabase
+          .from("medico")
+          .select("especialidad")
+          .eq("id_medico", registro.id_medico)
+          .maybeSingle()
+
+        return {
+          ...registro,
+          paciente: pacienteData || { nombre: "Usuario eliminado", apellido: "", dni: "N/A", correo: "N/A" },
+          medico: medicoData ? {
+            ...medicoData,
+            especialidad: medicoInfo?.especialidad || "General",
+          } : { nombre: "Médico eliminado", apellido: "", correo: "N/A" },
+        }
+      })
+    )
+
+    setHistorial(historialConDatos)
     setLoading(false)
   }
 
-  const downloadHistorialPaciente = async (pacienteId: string, pacienteNombre: string) => {
-    setDownloadingPaciente(pacienteId)
+  const downloadHistorialPaciente = async (pacienteId: number, pacienteNombre: string) => {
+    setDownloadingPaciente(pacienteId.toString())
     try {
       const supabase = createClient()
-      const { data, error } = await supabase
-        .from("historial_clinico")
-        .select(
-          `
-          *,
-          paciente:usuarios!historial_clinico_paciente_id_fkey(id, nombre, apellido, dni, email, telefono),
-          medico:medicos!historial_clinico_medico_id_fkey(
-            usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido)
-          ),
-          especialidad:especialidades!historial_clinico_especialidad_id_fkey(nombre)
-        `,
-        )
-        .eq("paciente_id", pacienteId)
-        .order("fecha", { ascending: false })
+      const { data: historialData, error } = await supabase
+        .from("historialclinico")
+        .select("*")
+        .eq("id_paciente", pacienteId)
 
-      if (error || !data) {
+      if (error || !historialData) {
         toast({
           title: "❌ Error al descargar",
           description: "No se pudo descargar el historial del paciente",
@@ -72,6 +89,36 @@ export function HistorialesCompletos() {
         return
       }
 
+      // Obtener datos completos para cada registro
+      const data = await Promise.all(
+        historialData.map(async (registro) => {
+          const { data: pacienteData } = await supabase
+            .from("usuario")
+            .select("id_usuario, nombre, apellido, dni, correo")
+            .eq("id_usuario", registro.id_paciente)
+            .maybeSingle()
+
+          const { data: medicoData } = await supabase
+            .from("usuario")
+            .select("id_usuario, nombre, apellido")
+            .eq("id_usuario", registro.id_medico)
+            .maybeSingle()
+
+          const { data: medicoInfo } = await supabase
+            .from("medico")
+            .select("especialidad")
+            .eq("id_medico", registro.id_medico)
+            .maybeSingle()
+
+          return {
+            ...registro,
+            paciente: pacienteData || { nombre: "Usuario eliminado", apellido: "", dni: "N/A", correo: "N/A" },
+            medico: medicoData || { nombre: "Médico eliminado", apellido: "" },
+            especialidad: medicoInfo?.especialidad || "General",
+          }
+        })
+      )
+
       let csvContent = ""
       csvContent += "HISTORIAL CLÍNICO DEL PACIENTE\n"
       csvContent += "=".repeat(80) + "\n\n"
@@ -79,8 +126,7 @@ export function HistorialesCompletos() {
       csvContent += "-".repeat(80) + "\n"
       csvContent += `Nombre Completo: ${data[0].paciente.nombre} ${data[0].paciente.apellido}\n`
       csvContent += `DNI: ${data[0].paciente.dni}\n`
-      csvContent += `Correo: ${data[0].paciente.email || "-"}\n`
-      csvContent += `Teléfono: ${data[0].paciente.telefono || "-"}\n`
+      csvContent += `Correo: ${data[0].paciente.correo || "-"}\n`
       csvContent += `Fecha de Descarga: ${new Date().toLocaleDateString("es-PE")} ${new Date().toLocaleTimeString("es-PE")}\n`
       csvContent += `Total de Registros: ${data.length}\n\n`
 
@@ -90,11 +136,10 @@ export function HistorialesCompletos() {
       data.forEach((registro: any, index: number) => {
         csvContent += `REGISTRO ${index + 1}\n`
         csvContent += `Fecha: ${new Date(registro.fecha).toLocaleDateString("es-PE")} ${new Date(registro.fecha).toLocaleTimeString("es-PE")}\n`
-        csvContent += `Especialidad: ${registro.especialidad.nombre}\n`
-        csvContent += `Médico: Dr(a). ${registro.medico.usuario.nombre} ${registro.medico.usuario.apellido}\n`
+        csvContent += `Especialidad: ${registro.especialidad}\n`
+        csvContent += `Médico: Dr(a). ${registro.medico.nombre} ${registro.medico.apellido}\n`
         csvContent += `Diagnóstico: ${registro.diagnostico}\n`
-        csvContent += `Receta Médica: ${registro.receta_medica || "No aplica"}\n`
-        csvContent += `Observaciones: ${registro.observaciones || "Sin observaciones"}\n`
+        csvContent += `Receta Médica: ${registro.receta || "No aplica"}\n`
         csvContent += "-".repeat(80) + "\n\n"
       })
 
@@ -125,27 +170,27 @@ export function HistorialesCompletos() {
 
   const filteredHistorial = historial.filter(
     (h) =>
-      h.paciente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.paciente.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.paciente.dni.includes(searchTerm) ||
-      h.medico.usuario.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.medico.usuario.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.especialidad.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.diagnostico.toLowerCase().includes(searchTerm.toLowerCase()),
+      h.paciente?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.paciente?.apellido?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.paciente?.dni?.includes(searchTerm) ||
+      h.medico?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.medico?.apellido?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.medico?.especialidad?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.diagnostico?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
   // Agrupar por paciente para mostrar botón de descarga
   const pacientesPorHistorial = new Map()
   filteredHistorial.forEach((h) => {
-    if (!pacientesPorHistorial.has(h.paciente.id)) {
-      pacientesPorHistorial.set(h.paciente.id, {
-        id: h.paciente.id,
+    if (!pacientesPorHistorial.has(h.id_paciente)) {
+      pacientesPorHistorial.set(h.id_paciente, {
+        id: h.id_paciente,
         nombre: `${h.paciente.nombre} ${h.paciente.apellido}`,
         dni: h.paciente.dni,
         registros: [],
       })
     }
-    pacientesPorHistorial.get(h.paciente.id).registros.push(h)
+    pacientesPorHistorial.get(h.id_paciente).registros.push(h)
   })
 
   if (loading) {
@@ -218,28 +263,28 @@ export function HistorialesCompletos() {
                 <TableBody>
                   {filteredHistorial.map((registro, index) => {
                     const mostrarBoton =
-                      index === 0 || filteredHistorial[index - 1].paciente.id !== registro.paciente.id
+                      index === 0 || filteredHistorial[index - 1].id_paciente !== registro.id_paciente
                     return (
-                      <TableRow key={registro.id}>
-                        <TableCell className="font-mono text-xs">{registro.paciente.id.slice(0, 8)}...</TableCell>
+                      <TableRow key={registro.id_historial}>
+                        <TableCell className="font-mono text-xs">{registro.id_paciente}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <User className="w-4 h-4 text-muted-foreground" />
                             <span className="font-medium">
-                              {registro.paciente.nombre} {registro.paciente.apellido}
+                              {registro.paciente?.nombre} {registro.paciente?.apellido}
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell>{registro.paciente.dni}</TableCell>
+                        <TableCell>{registro.paciente?.dni}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Stethoscope className="w-4 h-4 text-muted-foreground" />
                             <span>
-                              Dr(a). {registro.medico.usuario.nombre} {registro.medico.usuario.apellido}
+                              Dr(a). {registro.medico?.nombre} {registro.medico?.apellido}
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell>{registro.especialidad.nombre}</TableCell>
+                        <TableCell>{registro.medico?.especialidad}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Calendar className="w-4 h-4 text-muted-foreground" />
@@ -250,10 +295,10 @@ export function HistorialesCompletos() {
                           <p className="text-sm text-muted-foreground truncate">{registro.diagnostico}</p>
                         </TableCell>
                         <TableCell className="max-w-xs">
-                          {registro.receta_medica ? (
+                          {registro.receta ? (
                             <div className="flex items-center gap-2">
                               <Pill className="w-4 h-4 text-muted-foreground" />
-                              <p className="text-sm text-muted-foreground truncate">{registro.receta_medica}</p>
+                              <p className="text-sm text-muted-foreground truncate">{registro.receta}</p>
                             </div>
                           ) : (
                             <span className="text-sm text-muted-foreground">-</span>
@@ -266,15 +311,15 @@ export function HistorialesCompletos() {
                               variant="outline"
                               onClick={() =>
                                 downloadHistorialPaciente(
-                                  registro.paciente.id,
+                                  registro.id_paciente,
                                   `${registro.paciente.nombre} ${registro.paciente.apellido}`,
                                 )
                               }
-                              disabled={downloadingPaciente === registro.paciente.id}
+                              disabled={downloadingPaciente === registro.id_paciente.toString()}
                               className="gap-1 hover:bg-green-50 hover:text-green-600 hover:border-green-300 transition-colors"
                             >
                               <Download className="w-4 h-4" />
-                              {downloadingPaciente === registro.paciente.id ? "Descargando..." : "Descargar"}
+                              {downloadingPaciente === registro.id_paciente.toString() ? "Descargando..." : "Descargar"}
                             </Button>
                           )}
                         </TableCell>

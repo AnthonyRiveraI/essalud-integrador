@@ -31,7 +31,7 @@ export default function AdministradorLoginPage() {
         password: formData.password,
       })
 
-      if (usuario.rol !== "administrador") {
+      if (usuario.rol !== "Administrador") {
         toast({
           title: "Acceso denegado",
           description: "Este usuario no tiene permisos de administrador",
@@ -46,6 +46,7 @@ export default function AdministradorLoginPage() {
         title: "Bienvenido",
         description: `${usuario.nombre} ${usuario.apellido}`,
       })
+      
       router.push("/administrador/dashboard")
     } catch (error) {
       toast({
@@ -53,7 +54,6 @@ export default function AdministradorLoginPage() {
         description: error instanceof Error ? error.message : "Credenciales incorrectas",
         variant: "destructive",
       })
-    } finally {
       setLoading(false)
     }
   }

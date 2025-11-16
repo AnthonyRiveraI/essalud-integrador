@@ -1,168 +1,286 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { MessageSquare, Send, Bot, User } from "lucide-react"
+import { MessageSquare, Send, Loader2, RefreshCw, AlertCircle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { ChatMessage } from "./chat-message"
+import { InlineBookingCard } from "./inline-booking-card"
+import { EmergencyDialog } from "@/components/emergency-dialog"
+
+interface Message {
+  role: "user" | "assistant"
+  content: string
+  timestamp: Date
+  bookingSuggestion?: {
+    especialidad: string
+    urgencia: 'baja' | 'media' | 'alta' | 'urgente'
+    sintomas: string[]
+  }
+  isEmergency?: boolean // 🔥 NUEVO: Marca mensajes de emergencia
+}
 
 interface ChatbotMedicoProps {
   pacienteId: string
+  onBookAppointment?: (especialidad: string) => void // 🔥 NUEVO callback
 }
 
-export function ChatbotMedico({ pacienteId }: ChatbotMedicoProps) {
+export function ChatbotMedico({ pacienteId, onBookAppointment }: ChatbotMedicoProps) {
   const { toast } = useToast()
-  const [messages, setMessages] = useState<Array<{ role: "user" | "bot"; content: string }>>([
+  const [messages, setMessages] = useState<Message[]>([
     {
-      role: "bot",
+      role: "assistant",
       content:
-        "¡Hola! Soy EsSaludito, tu asistente médico de ESSALUD. Puedo ayudarte a identificar síntomas, recomendar especialistas, recetar medicamentos para enfermedades leves y ayudarte a agendar citas. ¿En qué puedo ayudarte hoy?",
+        "¡Hola! 👋 Soy ESSALUDITO, tu asistente médico virtual de ESSALUD.\n\nPuedo ayudarte a:\n• Orientarte sobre síntomas\n• Recomendar especialidades médicas\n• Ayudarte a agendar citas\n• Dar consejos de autocuidado\n\n¿Cómo te sientes hoy? ¿En qué puedo ayudarte?",
+      timestamp: new Date()
     },
   ])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
+  const [conversacionId, setConversacionId] = useState<number | null>(null)
+  const [showEmergencyDialog, setShowEmergencyDialog] = useState(false) // 🔥 NUEVO
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Auto-scroll al final cuando hay nuevos mensajes
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
+
+  // Enfocar input después de enviar
+  useEffect(() => {
+    if (!loading) {
+      inputRef.current?.focus()
+    }
+  }, [loading])
 
   const handleSend = async () => {
-    if (!input.trim()) return
+    if (!input.trim() || loading) return
 
     const userMessage = input.trim()
     setInput("")
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }])
+    
+    const newUserMessage: Message = {
+      role: "user",
+      content: userMessage,
+      timestamp: new Date()
+    }
+    
+    setMessages((prev) => [...prev, newUserMessage])
     setLoading(true)
 
-    // Simulación de respuesta del chatbot (en producción, usar AI SDK)
-    setTimeout(() => {
-      let botResponse = ""
+    try {
+      // Preparar mensajes para el API
+      const apiMessages = [...messages, newUserMessage].map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
 
-      const lowerInput = userMessage.toLowerCase()
+      // Llamar al API de chat
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: apiMessages,
+          pacienteId,
+          conversacionId // Enviar ID de conversación actual
+        })
+      })
 
-      if (
-        lowerInput.includes("dolor de pecho") ||
-        lowerInput.includes("dificultad para respirar") ||
-        lowerInput.includes("sangrado") ||
-        lowerInput.includes("desmayo") ||
-        lowerInput.includes("convulsiones") ||
-        lowerInput.includes("pérdida de conciencia")
-      ) {
-        botResponse =
-          "⚠️ ALERTA: Los síntomas que describes son CRÍTICOS y requieren atención inmediata. Debes ir a EMERGENCIA ahora mismo o llamar a una ambulancia. No esperes más. ¿Necesitas ayuda para registrar tu triaje de emergencia?"
-      } else if (
-        lowerInput.includes("fiebre alta") ||
-        lowerInput.includes("vómito") ||
-        lowerInput.includes("dolor intenso") ||
-        lowerInput.includes("mareos") ||
-        lowerInput.includes("debilidad")
-      ) {
-        botResponse =
-          "Estos síntomas requieren atención médica urgente. Te recomiendo agendar una cita lo antes posible. ¿Deseas que te ayude a registrar una cita urgente? Puedo recomendarte especialidades según tus síntomas."
-      } else if (
-        lowerInput.includes("dolor de cabeza") ||
-        lowerInput.includes("resfriado") ||
-        lowerInput.includes("gripe") ||
-        lowerInput.includes("tos leve")
-      ) {
-        botResponse =
-          "Para estos síntomas leves, te recomiendo: descansar, mantenerte hidratado, tomar paracetamol (500mg cada 6 horas) o ibuprofeno (400mg cada 8 horas). Si los síntomas persisten más de 3 días, agenda una cita con Medicina General."
-      } else if (
-        lowerInput.includes("hormigueo") ||
-        lowerInput.includes("entumecimiento") ||
-        lowerInput.includes("visión borrosa") ||
-        lowerInput.includes("pérdida de memoria")
-      ) {
-        botResponse =
-          "Estos síntomas podrían indicar varios problemas. Te recomiendo consultar con un especialista en Neurología para un diagnóstico preciso. ¿Deseas que te ayude a agendar una cita con Neurología?"
-      } else if (
-        lowerInput.includes("corazón") ||
-        lowerInput.includes("presión") ||
-        lowerInput.includes("palpitaciones")
-      ) {
-        botResponse =
-          "Para problemas cardíacos o de presión arterial, necesitas consultar con un especialista en Cardiología. Ellos pueden hacer un diagnóstico completo. ¿Deseas agendar una cita con Cardiología?"
-      } else if (
-        lowerInput.includes("piel") ||
-        lowerInput.includes("manchas") ||
-        lowerInput.includes("acné") ||
-        lowerInput.includes("picazón")
-      ) {
-        botResponse =
-          "Para problemas dermatológicos, te recomiendo un especialista en Dermatología. ¿Deseas agendar una cita? Puedo ayudarte a encontrar disponibilidad."
-      } else if (lowerInput.includes("niño") || lowerInput.includes("bebé") || lowerInput.includes("pediatría")) {
-        botResponse =
-          "Para consultas de niños y bebés, necesitas un especialista en Pediatría. ¿Deseas agendar una cita pediátrica?"
-      } else if (lowerInput.includes("cabeza") || lowerInput.includes("migraña") || lowerInput.includes("neurología")) {
-        botResponse =
-          "Para problemas neurológicos como migrañas o dolores de cabeza persistentes, te recomiendo Neurología. ¿Deseas agendar una cita?"
-      } else if (lowerInput.includes("cita") || lowerInput.includes("agendar") || lowerInput.includes("reservar")) {
-        botResponse =
-          "Perfecto, puedo ayudarte a agendar una cita. Ve a la sección 'Registrar Cita' en el menú superior, selecciona la especialidad que necesitas, y yo te recomendaré el médico disponible más cercano."
-      } else {
-        botResponse =
-          "Entiendo tu consulta. Para poder ayudarte mejor, ¿podrías describir tus síntomas con más detalle? Por ejemplo: ¿tienes dolor?, ¿fiebre?, ¿cuánto tiempo llevas con estos síntomas? Esto me ayudará a recomendarte la mejor especialidad."
+      if (!response.ok) {
+        throw new Error('Error en la respuesta del servidor')
       }
 
-      setMessages((prev) => [...prev, { role: "bot", content: botResponse }])
+      const data = await response.json()
+
+      // Guardar ID de conversación si es nueva
+      if (data.conversacionId && !conversacionId) {
+        setConversacionId(data.conversacionId)
+        console.log('[Chatbot] Conversación iniciada:', data.conversacionId)
+      }
+
+      console.log('[Chatbot] 🤖 Respuesta del agente:', {
+        usedTool: data.metadata?.functionCall,
+        toolName: data.metadata?.toolUsed,
+        especialidad: data.especialidadRecomendada,
+        urgencia: data.urgencia,
+        sintomas: data.sintomasDetectados,
+        emergency: data.emergency // 🔥 NUEVO
+      })
+
+      // Agregar respuesta del asistente
+      const assistantMessage: Message = {
+        role: "assistant",
+        content: data.message,
+        timestamp: new Date(),
+        // Incluir sugerencia de cita en el mensaje si existe
+        bookingSuggestion: data.shouldShowBooking && data.especialidadRecomendada ? {
+          especialidad: data.especialidadRecomendada,
+          urgencia: data.urgencia,
+          sintomas: data.sintomasDetectados
+        } : undefined,
+        // 🔥 NUEVO: Marcar si es emergencia
+        isEmergency: data.emergency
+      }
+      
+      setMessages((prev) => [...prev, assistantMessage])
+
+    } catch (error) {
+      console.error('Error al enviar mensaje:', error)
+      toast({
+        title: "Error",
+        description: "No pude procesar tu mensaje. Por favor intenta de nuevo.",
+        variant: "destructive"
+      })
+    } finally {
       setLoading(false)
-    }, 1000)
+    }
+  }
+
+  const handleRestart = () => {
+    setMessages([
+      {
+        role: "assistant",
+        content:
+          "¡Hola! 👋 Soy ESSALUDITO, tu asistente médico virtual de ESSALUD.\n\nPuedo ayudarte a:\n• Orientarte sobre síntomas\n• Recomendar especialidades médicas\n• Ayudarte a agendar citas\n• Dar consejos de autocuidado\n\n¿Cómo te sientes hoy? ¿En qué puedo ayudarte?",
+        timestamp: new Date()
+      }
+    ])
+    setConversacionId(null) // Reset conversación
+    setInput("")
+    
+    toast({
+      title: "Nueva conversación iniciada",
+      description: "El historial anterior se ha guardado"
+    })
   }
 
   return (
-    <Card className="flex flex-col h-full max-h-[600px]">
-      <CardHeader className="flex-shrink-0">
-        <CardTitle className="flex items-center gap-2">
-          <MessageSquare className="w-5 h-5" />
-          EsSaludito - Asistente Médico
-        </CardTitle>
-        <CardDescription>Consulta sobre síntomas, recibe recomendaciones y agenda citas</CardDescription>
-      </CardHeader>
-      <CardContent className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-4 bg-muted/20 rounded-lg">
-          {messages.map((message, index) => (
-            <div key={index} className={`flex gap-3 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-              {message.role === "bot" && (
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <Bot className="w-5 h-5 text-primary" />
-                </div>
-              )}
-              <div
-                className={`max-w-xs rounded-lg p-3 break-words ${
-                  message.role === "user" ? "bg-primary text-primary-foreground" : "bg-card border"
-                }`}
-              >
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-              </div>
-              {message.role === "user" && (
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <User className="w-5 h-5 text-primary" />
-                </div>
-              )}
+    <div className="space-y-4">
+      {/* Chat Principal */}
+      <Card className="flex flex-col h-full max-h-[600px]">
+        <CardHeader className="shrink-0 border-b">
+          <div className="flex items-start justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-blue-600" />
+                ESSALUDITO - Asistente Médico IA
+              </CardTitle>
+              <CardDescription>
+                Orientación médica inteligente con Google Gemini
+              </CardDescription>
             </div>
-          ))}
-          {loading && (
-            <div className="flex gap-3">
-              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Bot className="w-5 h-5 text-primary" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRestart}
+              disabled={loading}
+              title="Reiniciar conversación"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        
+        <CardContent className="flex-1 flex flex-col min-h-0 p-0">
+          {/* Área de Mensajes */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            {messages.map((message, index) => (
+              <div key={index}>
+                <ChatMessage
+                  role={message.role}
+                  content={message.content}
+                  timestamp={message.timestamp}
+                />
+                {/* Mostrar tarjeta de cita inline si existe */}
+                {message.bookingSuggestion && (
+                  <div className="ml-11">
+                    <InlineBookingCard
+                      especialidad={message.bookingSuggestion.especialidad}
+                      urgencia={message.bookingSuggestion.urgencia}
+                      sintomas={message.bookingSuggestion.sintomas}
+                      onBookAppointment={onBookAppointment}
+                    />
+                  </div>
+                )}
+                {/* 🔥 NUEVO: Mostrar botón de emergencia si se detectó */}
+                {message.isEmergency && (
+                  <div className="ml-11 mt-3">
+                    <Button
+                      variant="destructive"
+                      size="lg"
+                      className="w-full animate-pulse shadow-lg"
+                      onClick={() => setShowEmergencyDialog(true)}
+                    >
+                      <AlertCircle className="w-5 h-5 mr-2" />
+                      🚨 REGISTRAR EMERGENCIA AHORA
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center mt-2">
+                      O llama al <strong>106</strong> para ambulancia
+                    </p>
+                  </div>
+                )}
               </div>
-              <div className="bg-card border rounded-lg p-3">
-                <p className="text-sm text-muted-foreground">EsSaludito está pensando...</p>
+            ))}
+            
+            {loading && (
+              <div className="flex gap-3 py-4">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  ESSALUDITO está analizando...
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+            
+            <div ref={messagesEndRef} />
+          </div>
 
-        <div className="flex gap-2 flex-shrink-0">
-          <Input
-            placeholder="Describe tus síntomas o haz una pregunta a EsSaludito..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            disabled={loading}
-          />
-          <Button onClick={handleSend} disabled={loading || !input.trim()}>
-            <Send className="w-4 h-4" />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+          {/* Input de Mensaje */}
+          <div className="shrink-0 border-t p-4">
+            <div className="flex gap-2">
+              <Input
+                ref={inputRef}
+                placeholder="Describe tus síntomas o haz una pregunta..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault()
+                    handleSend()
+                  }
+                }}
+                disabled={loading}
+                className="flex-1"
+              />
+              <Button 
+                onClick={handleSend} 
+                disabled={loading || !input.trim()}
+                size="icon"
+              >
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 text-center">
+              💡 Presiona Enter para enviar • Shift+Enter para nueva línea
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 🔥 NUEVO: Diálogo de emergencia */}
+      <EmergencyDialog
+        open={showEmergencyDialog}
+        onOpenChange={setShowEmergencyDialog}
+        pacienteId={pacienteId}
+      />
+    </div>
   )
 }

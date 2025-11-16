@@ -22,11 +22,11 @@ import {
 } from "@/components/ui/dialog"
 
 interface HistorialClinicoMedicoProps {
-  medicoId: string
-  especialidadId: number
+  medicoId: number
+  especialidad: string
 }
 
-export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialClinicoMedicoProps) {
+export function HistorialClinicoMedico({ medicoId, especialidad }: HistorialClinicoMedicoProps) {
   const { toast } = useToast()
   const [historial, setHistorial] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -36,7 +36,6 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
   const [formData, setFormData] = useState({
     diagnostico: "",
     recetaMedica: "",
-    observaciones: "",
     estadoPaciente: "estable",
     fechaMuerte: "",
   })
@@ -51,27 +50,50 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
     
     console.log('🔍 Cargando historial clínico para médico:', medicoId)
     
-    const { data, error } = await supabase
-      .from("historial_clinico")
-      .select(
-        `
-        *,
-        paciente:usuarios!historial_clinico_paciente_id_fkey(nombre, apellido, dni),
-        especialidad:especialidades!historial_clinico_especialidad_id_fkey(nombre)
-      `,
-      )
-      .eq("medico_id", medicoId)
+    // Obtener historial
+    const { data: historialData, error: historialError } = await supabase
+      .from("historialclinico")
+      .select("*")
+      .eq("id_medico", medicoId)
       .order("fecha", { ascending: false })
 
     console.log('📊 Resultado historial clínico:', {
-      registrosEncontrados: data?.length || 0,
-      data: data,
-      error: error
+      registrosEncontrados: historialData?.length || 0,
+      data: historialData,
+      error: historialError
     })
 
-    if (!error && data) {
-      setHistorial(data)
+    if (historialError || !historialData) {
+      setLoading(false)
+      return
     }
+
+    // Obtener datos del paciente para cada registro
+    const historialConPaciente = await Promise.all(
+      historialData.map(async (registro) => {
+        const { data: pacienteData } = await supabase
+          .from("paciente")
+          .select("*")
+          .eq("id_paciente", registro.id_paciente)
+          .single()
+
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("nombre, apellido, dni")
+          .eq("id_usuario", pacienteData?.id_paciente)
+          .single()
+
+        return {
+          ...registro,
+          paciente: {
+            ...pacienteData,
+            ...usuarioData
+          }
+        }
+      })
+    )
+
+    setHistorial(historialConPaciente)
     setLoading(false)
   }
 
@@ -88,30 +110,22 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
     console.log('🔍 Buscando paciente con DNI:', searchDni)
 
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("usuarios")
+    
+    // Buscar usuario con DNI
+    const { data: usuarioData, error: usuarioError } = await supabase
+      .from("usuario")
       .select("*")
       .eq("dni", searchDni)
-      .eq("rol", "paciente")
-      .maybeSingle() // Cambiado de .single() a .maybeSingle() para evitar error 406
+      .eq("rol", "Paciente")
+      .maybeSingle()
 
-    console.log('👤 Resultado búsqueda paciente:', {
-      pacienteEncontrado: !!data,
-      data: data,
-      error: error
+    console.log('👤 Resultado búsqueda usuario:', {
+      usuarioEncontrado: !!usuarioData,
+      data: usuarioData,
+      error: usuarioError
     })
 
-    if (error) {
-      console.error('❌ Error en búsqueda:', error)
-      toast({
-        title: "❌ Error en la búsqueda",
-        description: error.message || "Ocurrió un error al buscar el paciente",
-        variant: "destructive",
-      })
-      return
-    }
-
-    if (!data) {
+    if (usuarioError || !usuarioData) {
       toast({
         title: "❌ Paciente no encontrado",
         description: `No se encontró un paciente con DNI: ${searchDni}`,
@@ -120,7 +134,17 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
       return
     }
 
-    setSelectedPaciente(data)
+    // Obtener datos del paciente
+    const { data: pacienteData } = await supabase
+      .from("paciente")
+      .select("*")
+      .eq("id_paciente", usuarioData.id_usuario)
+      .single()
+
+    setSelectedPaciente({
+      ...usuarioData,
+      ...pacienteData
+    })
     setDialogOpen(true)
   }
 
@@ -139,28 +163,36 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
     // Buscar triaje del paciente si existe
     const { data: triageData } = await supabase
       .from("triaje")
-      .select("id")
-      .eq("paciente_id", selectedPaciente.id)
-      .single()
+      .select("id_triaje")
+      .eq("id_paciente", selectedPaciente.id_paciente)
+      .maybeSingle()
 
     if (triageData) {
-      await supabase.from("triaje").update(triageUpdate).eq("id", triageData.id)
+      await supabase.from("triaje").update(triageUpdate).eq("id_triaje", triageData.id_triaje)
     }
 
-    const { error } = await supabase.from("historial_clinico").insert({
-      paciente_id: selectedPaciente.id,
-      medico_id: medicoId,
-      especialidad_id: especialidadId,
-      fecha: new Date().toISOString(),
+    console.log('💾 Intentando guardar historial:', {
+      id_paciente: selectedPaciente.id_paciente,
+      id_medico: medicoId,
       diagnostico: formData.diagnostico,
-      receta_medica: formData.recetaMedica,
-      observaciones: formData.observaciones,
+      receta: formData.recetaMedica,
     })
 
+    const { data: insertData, error } = await supabase.from("historialclinico").insert({
+      id_paciente: selectedPaciente.id_paciente,
+      id_medico: medicoId,
+      fecha: new Date().toISOString(),
+      diagnostico: formData.diagnostico,
+      receta: formData.recetaMedica,
+    })
+
+    console.log('📝 Resultado insert historial:', { data: insertData, error })
+
     if (error) {
+      console.error('❌ Error al guardar historial:', error)
       toast({
         title: "❌ Error al guardar",
-        description: "No se pudo guardar el registro en el historial clínico",
+        description: error.message || "No se pudo guardar el registro en el historial clínico",
         variant: "destructive",
       })
       return
@@ -174,7 +206,6 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
     setFormData({
       diagnostico: "",
       recetaMedica: "",
-      observaciones: "",
       estadoPaciente: "estable",
       fechaMuerte: "",
     })
@@ -322,20 +353,6 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
                   </div>
                 )}
 
-                <div className="space-y-2">
-                  <Label htmlFor="observaciones" className="text-sm font-medium">
-                    Observaciones
-                  </Label>
-                  <Textarea
-                    id="observaciones"
-                    placeholder="Observaciones adicionales..."
-                    value={formData.observaciones}
-                    onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
-                    rows={3}
-                    className="resize-none"
-                  />
-                </div>
-
                 <div className="flex gap-2 justify-end">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} className="h-11">
                     Cancelar
@@ -386,20 +403,13 @@ export function HistorialClinicoMedico({ medicoId, especialidadId }: HistorialCl
                       <p className="text-sm text-muted-foreground">{registro.diagnostico}</p>
                     </div>
 
-                    {registro.receta_medica && (
+                    {registro.receta && (
                       <div>
                         <h4 className="font-semibold text-sm mb-1 flex items-center gap-2">
                           <Pill className="w-4 h-4" />
                           Receta Médica:
                         </h4>
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{registro.receta_medica}</p>
-                      </div>
-                    )}
-
-                    {registro.observaciones && (
-                      <div>
-                        <h4 className="font-semibold text-sm mb-1">Observaciones:</h4>
-                        <p className="text-sm text-muted-foreground">{registro.observaciones}</p>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{registro.receta}</p>
                       </div>
                     )}
                   </div>

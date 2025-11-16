@@ -28,10 +28,11 @@ export function MedicoDashboardNav({ activeSection, onSectionChange, userName, e
   const sections = [
     { id: "citas", label: "Mis Citas del Día", icon: Calendar },
     { id: "historial", label: "Historial Clínico", icon: FileText },
+    { id: "emergencias", label: "Emergencias", icon: AlertCircle },
   ]
 
   if (especialidad === "Emergencia") {
-    sections.push({ id: "triaje", label: "Gestionar Triaje", icon: AlertCircle })
+    sections.push({ id: "triaje", label: "Gestionar Triaje", icon: Stethoscope })
     sections.push({ id: "altas", label: "Dar de Alta", icon: UserPlus })
   }
 
@@ -63,7 +64,7 @@ export function MedicoDashboardNav({ activeSection, onSectionChange, userName, e
                 variant={activeSection === section.id ? "default" : "outline"}
                 size="sm"
                 onClick={() => onSectionChange(section.id)}
-                className="flex-shrink-0"
+                className="shrink-0"
               >
                 <Icon className="w-4 h-4 mr-2" />
                 {section.label}

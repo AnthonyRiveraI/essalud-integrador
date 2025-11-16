@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client"
 import { Users, Calendar, CheckCircle, Clock } from "lucide-react"
 
 interface EstadisticasMedicoProps {
-  medicoId: string
+  medicoId: number
 }
 
 export function EstadisticasMedico({ medicoId }: EstadisticasMedicoProps) {
@@ -28,34 +28,34 @@ export function EstadisticasMedico({ medicoId }: EstadisticasMedicoProps) {
 
     // Pacientes únicos atendidos
     const { data: pacientesData } = await supabase
-      .from("citas")
-      .select("paciente_id", { count: "exact" })
-      .eq("medico_id", medicoId)
-      .eq("estado", "completada")
+      .from("cita")
+      .select("id_paciente", { count: "exact" })
+      .eq("id_medico", medicoId)
+      .eq("estado", "Completada")
 
-    const pacientesUnicos = new Set(pacientesData?.map((c) => c.paciente_id) || []).size
+    const pacientesUnicos = new Set(pacientesData?.map((c) => c.id_paciente) || []).size
 
     // Citas hoy
     const { count: citasHoy } = await supabase
-      .from("citas")
-      .select("*", { count: "exact" })
-      .eq("medico_id", medicoId)
+      .from("cita")
+      .select("*", { count: "exact", head: true })
+      .eq("id_medico", medicoId)
       .eq("fecha", today)
-      .neq("estado", "cancelada")
+      .neq("estado", "Cancelada")
 
     // Citas completadas
     const { count: citasCompletadas } = await supabase
-      .from("citas")
-      .select("*", { count: "exact" })
-      .eq("medico_id", medicoId)
-      .eq("estado", "completada")
+      .from("cita")
+      .select("*", { count: "exact", head: true })
+      .eq("id_medico", medicoId)
+      .eq("estado", "Completada")
 
     // Citas pendientes
     const { count: citasPendientes } = await supabase
-      .from("citas")
-      .select("*", { count: "exact" })
-      .eq("medico_id", medicoId)
-      .eq("estado", "programada")
+      .from("cita")
+      .select("*", { count: "exact", head: true })
+      .eq("id_medico", medicoId)
+      .eq("estado", "Pendiente")
 
     setStats({
       pacientesAtendidos: pacientesUnicos,

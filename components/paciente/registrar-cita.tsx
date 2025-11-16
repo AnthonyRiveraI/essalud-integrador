@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -14,9 +14,11 @@ import { Calendar } from "lucide-react"
 
 interface RegistrarCitaProps {
   pacienteId: string
+  preselectedEspecialidad?: string | null
+  onEspecialidadUsed?: () => void
 }
 
-export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
+export function RegistrarCita({ pacienteId, preselectedEspecialidad, onEspecialidadUsed }: RegistrarCitaProps) {
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
   const [especialidades, setEspecialidades] = useState<any[]>([])
@@ -26,10 +28,38 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
   const [fecha, setFecha] = useState("")
   const [hora, setHora] = useState("")
   const [boleta, setBoleta] = useState<any>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     loadEspecialidades()
   }, [])
+
+  // Pre-seleccionar especialidad cuando llega desde el chatbot
+  useEffect(() => {
+    if (preselectedEspecialidad && especialidades.length > 0) {
+      const especialidadMatch = especialidades.find(
+        e => e.nombre.toLowerCase() === preselectedEspecialidad.toLowerCase()
+      )
+      if (especialidadMatch) {
+        setSelectedEspecialidad(especialidadMatch.id)
+        onEspecialidadUsed?.() // Limpiar el parámetro de la URL
+        
+        // Scroll suave al formulario
+        setTimeout(() => {
+          cardRef.current?.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'start' 
+          })
+        }, 100)
+        
+        // Mostrar notificación
+        toast({
+          title: "✅ Especialidad Pre-seleccionada",
+          description: `Se ha seleccionado automáticamente: ${especialidadMatch.nombre}`,
+        })
+      }
+    }
+  }, [preselectedEspecialidad, especialidades, onEspecialidadUsed, toast])
 
   useEffect(() => {
     if (selectedEspecialidad) {
@@ -39,32 +69,59 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
 
   const loadEspecialidades = async () => {
     const supabase = createClient()
-    const { data, error } = await supabase.from("especialidades").select("*").order("nombre")
+    // Obtener especialidades únicas de los médicos
+    const { data, error } = await supabase
+      .from("medico")
+      .select("especialidad")
+      .order("especialidad")
 
     if (!error && data) {
-      setEspecialidades(data.filter((e) => e.nombre !== "Emergencia"))
+      // Obtener especialidades únicas
+      const uniqueEspecialidades = [...new Set(data.map(m => m.especialidad))]
+        .filter(e => e && e !== "Emergencia")
+        .map((e, index) => ({ id: index.toString(), nombre: e }))
+      
+      setEspecialidades(uniqueEspecialidades)
     }
   }
 
   const loadMedicos = async (especialidadId: string) => {
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("medicos")
-      .select(
-        `
-        *,
-        usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido)
-      `,
-      )
-      .eq("especialidad_id", especialidadId)
+    // Buscar el nombre de la especialidad
+    const especialidadNombre = especialidades.find(e => e.id === especialidadId)?.nombre
+    
+    // Primero obtener los médicos
+    const { data: medicosData, error: medicosError } = await supabase
+      .from("medico")
+      .select("*")
+      .eq("especialidad", especialidadNombre)
 
-    if (!error && data) {
-      console.log("[Registrar Cita] Médicos cargados:", data)
-      setMedicos(data)
-    } else {
-      console.error("[Registrar Cita] Error cargando médicos:", error)
+    if (medicosError || !medicosData) {
+      console.error("[Registrar Cita] Error cargando médicos:", medicosError)
       setMedicos([])
+      return
     }
+
+    // Luego obtener los datos de usuario para cada médico
+    const medicosConUsuario = await Promise.all(
+      medicosData.map(async (medico) => {
+        // En tu schema, medico.id_medico ES el id_usuario
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("nombre, apellido")
+          .eq("id_usuario", medico.id_medico)
+          .single()
+
+        return {
+          ...medico,
+          usuario: usuarioData || { nombre: "Sin asignar", apellido: "" }
+        }
+      })
+    )
+
+    console.log("[Registrar Cita] Médicos cargados:", medicosConUsuario)
+    console.log("[Registrar Cita] Primer médico detallado:", JSON.stringify(medicosConUsuario[0], null, 2))
+    setMedicos(medicosConUsuario)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -74,6 +131,9 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
     try {
       const supabase = createClient()
 
+      // NOTA: Comentado porque la tabla horarios_medicos no existe en el schema actual
+      // Si necesitas esta funcionalidad, deberás crear la tabla primero
+      /*
       // Verificar disponibilidad del médico
       const fechaSeleccionada = new Date(fecha)
       const diaSemana = fechaSeleccionada.getDay()
@@ -94,22 +154,23 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
         setLoading(false)
         return
       }
+      */
 
       // Verificar límite de citas del día
       const { data: citasDelDia } = await supabase
-        .from("citas")
+        .from("cita")
         .select("*")
-        .eq("medico_id", selectedMedico)
+        .eq("id_medico", selectedMedico)
         .eq("fecha", fecha)
         .neq("estado", "cancelada")
 
-      const { data: medicoData } = await supabase
-        .from("medicos")
-        .select("max_citas_dia")
-        .eq("id", selectedMedico)
+      const { data: medicoLimite } = await supabase
+        .from("medico")
+        .select("max_pacientes_dia")
+        .eq("id_medico", selectedMedico)
         .single()
 
-      if (citasDelDia && medicoData && citasDelDia.length >= medicoData.max_citas_dia) {
+      if (citasDelDia && medicoLimite && citasDelDia.length >= medicoLimite.max_pacientes_dia) {
         toast({
           title: "⚠️ Cupo lleno",
           description: "El médico ha alcanzado el máximo de citas para ese día",
@@ -119,41 +180,48 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
         return
       }
 
+      // Generar código único de boleta
       const timestamp = Date.now().toString().slice(-8) // Últimos 8 dígitos del timestamp
       const random = Math.random().toString(36).substr(2, 6).toUpperCase() // 6 caracteres aleatorios
       const codigoBoleta = `CITA-${timestamp}-${random}`
 
       // Crear la cita
       const { data: cita, error } = await supabase
-        .from("citas")
+        .from("cita")
         .insert({
           codigo_boleta: codigoBoleta,
-          paciente_id: pacienteId,
-          medico_id: selectedMedico,
-          especialidad_id: selectedEspecialidad,
+          id_paciente: pacienteId,
+          id_medico: selectedMedico,
           fecha,
           hora,
+          tipo: "Normal", // Tipo válido: 'Normal' o 'Emergencia'
           piso: Math.floor(Math.random() * 3) + 2, // Pisos 2-4
           puerta: `${Math.floor(Math.random() * 20) + 100}`, // Puertas 100-119
-          estado: "programada",
+          estado: "Pendiente", // Estado válido: 'Pendiente', 'Completada', 'Cancelada'
         })
-        .select(
-          `
-          *,
-          medico:medicos!citas_medico_id_fkey(
-            usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido)
-          ),
-          especialidad:especialidades!citas_especialidad_id_fkey(nombre)
-        `,
-        )
+        .select("*")
         .single()
 
       if (error) throw error
 
+      // Obtener datos del médico para mostrar en el mensaje
+      const { data: medicoData } = await supabase
+        .from("medico")
+        .select("*")
+        .eq("id_medico", selectedMedico)
+        .single()
+
+      // medico.id_medico ES el id_usuario
+      const { data: usuarioMedico } = await supabase
+        .from("usuario")
+        .select("nombre, apellido")
+        .eq("id_usuario", medicoData?.id_medico)
+        .single()
+
       setBoleta(cita)
       toast({
         title: "✅ Cita registrada exitosamente",
-        description: `Su cita con ${cita.medico.usuario.nombre} ${cita.medico.usuario.apellido} ha sido agendada`,
+        description: `Su cita con Dr(a). ${usuarioMedico?.nombre} ${usuarioMedico?.apellido} ha sido agendada. Código de boleta: ${codigoBoleta}`,
       })
 
       // Resetear formulario
@@ -184,17 +252,7 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
           <div className="bg-primary/5 p-6 rounded-lg space-y-3">
             <div className="flex justify-between border-b pb-2">
               <span className="font-semibold">Código de Boleta:</span>
-              <span className="font-mono">{boleta.codigo_boleta}</span>
-            </div>
-            <div className="flex justify-between border-b pb-2">
-              <span className="font-semibold">Médico:</span>
-              <span>
-                Dr(a). {boleta.medico.usuario.nombre} {boleta.medico.usuario.apellido}
-              </span>
-            </div>
-            <div className="flex justify-between border-b pb-2">
-              <span className="font-semibold">Especialidad:</span>
-              <span>{boleta.especialidad.nombre}</span>
+              <span className="font-mono text-primary">{boleta.codigo_boleta}</span>
             </div>
             <div className="flex justify-between border-b pb-2">
               <span className="font-semibold">Fecha:</span>
@@ -208,10 +266,20 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
               <span className="font-semibold">Piso:</span>
               <span>{boleta.piso}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between border-b pb-2">
               <span className="font-semibold">Puerta:</span>
               <span>{boleta.puerta}</span>
             </div>
+            <div className="flex justify-between">
+              <span className="font-semibold">Estado:</span>
+              <span className="text-green-600 font-medium">✓ Programada</span>
+            </div>
+          </div>
+
+          <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg">
+            <p className="text-sm text-blue-800 dark:text-blue-200">
+              <strong>Importante:</strong> Guarde su código de boleta <span className="font-mono font-bold">{boleta.codigo_boleta}</span> para futuras consultas.
+            </p>
           </div>
 
           <Button onClick={() => setBoleta(null)} className="w-full">
@@ -223,13 +291,25 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
   }
 
   return (
-    <Card>
+    <Card ref={cardRef} className={preselectedEspecialidad && selectedEspecialidad ? "ring-2 ring-blue-500 ring-offset-2 transition-all" : ""}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Calendar className="w-5 h-5" />
           Registrar Nueva Cita
         </CardTitle>
         <CardDescription>Complete los datos para agendar su cita médica</CardDescription>
+        
+        {/* Banner informativo si viene desde el chatbot */}
+        {preselectedEspecialidad && selectedEspecialidad && (
+          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg animate-in fade-in slide-in-from-top-2 duration-500">
+            <p className="text-sm text-blue-900 flex items-center gap-2">
+              <span className="text-lg">🤖</span>
+              <span>
+                <strong>ESSALUDITO</strong> ha recomendado esta especialidad basándose en tus síntomas
+              </span>
+            </p>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -273,8 +353,8 @@ export function RegistrarCita({ pacienteId }: RegistrarCitaProps) {
                     </div>
                   ) : (
                     medicos.map((med) => (
-                      <SelectItem key={med.id} value={med.id}>
-                        Dr(a). {med.usuario.nombre} {med.usuario.apellido}
+                      <SelectItem key={med.id_medico} value={med.id_medico.toString()}>
+                        Dr(a). {med.usuario?.nombre || "Sin nombre"} {med.usuario?.apellido || ""}
                       </SelectItem>
                     ))
                   )}

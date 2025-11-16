@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { loginUser } from "@/lib/auth"
+import { createClient } from "@/lib/supabase/client"
 import { ArrowLeft, User } from "lucide-react"
 import Link from "next/link"
 
@@ -32,7 +33,7 @@ export default function PacienteLoginPage() {
         password: formData.password,
       })
 
-      if (usuario.rol !== "paciente") {
+      if (usuario.rol !== "Paciente") {
         toast({
           title: "Usuario no registrado",
           description: "Las credenciales ingresadas no corresponden a un paciente registrado",
@@ -42,21 +43,33 @@ export default function PacienteLoginPage() {
         return
       }
 
-      if (usuario.tipo_asegurado === "no_asegurado") {
-        toast({
-          title: "Usuario no registrado",
-          description: "Este usuario no está registrado en el sistema. Contacte al administrador.",
-          variant: "destructive",
-        })
-        setLoading(false)
-        return
+      // Obtener id_paciente de la tabla paciente
+      const supabase = createClient()
+      const { data: pacienteData, error: pacienteError } = await supabase
+        .from("paciente")
+        .select("id_paciente, dni, fecha_nacimiento")
+        .eq("id_paciente", usuario.id_usuario)
+        .single()
+
+      console.log('📋 Datos del paciente:', { pacienteData, pacienteError, id_usuario: usuario.id_usuario })
+
+      // Agregar id_paciente al objeto usuario
+      const usuarioCompleto = {
+        ...usuario,
+        id_paciente: pacienteData?.id_paciente || usuario.id_usuario,
+        paciente_id: pacienteData?.id_paciente || usuario.id_usuario // Para compatibilidad
       }
 
-      localStorage.setItem("usuario", JSON.stringify(usuario))
+      console.log('✅ Usuario completo:', usuarioCompleto)
+
+      localStorage.setItem("usuario", JSON.stringify(usuarioCompleto))
+      
       toast({
         title: "Bienvenido",
         description: `Hola ${usuario.nombre} ${usuario.apellido}`,
       })
+      
+      // No ejecutar setLoading(false) aquí porque vamos a redirigir
       router.push("/paciente/dashboard")
     } catch (error) {
       toast({
@@ -64,7 +77,6 @@ export default function PacienteLoginPage() {
         description: "Las credenciales ingresadas no son válidas",
         variant: "destructive",
       })
-    } finally {
       setLoading(false)
     }
   }

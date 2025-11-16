@@ -30,8 +30,10 @@ export function ListaPacientes() {
     nombre: "",
     apellido: "",
     dni: "",
+    correo: "",
+    fecha_nacimiento: "",
+    password: "",
     telefono: "",
-    email: "",
   })
 
   useEffect(() => {
@@ -41,15 +43,35 @@ export function ListaPacientes() {
   const loadPacientes = async () => {
     setLoading(true)
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("usuarios")
+    
+    // Obtener todos los pacientes
+    const { data: pacientesData, error: pacientesError } = await supabase
+      .from("paciente")
       .select("*")
-      .eq("rol", "paciente")
-      .order("nombre", { ascending: true })
+      .order("id_paciente", { ascending: true })
 
-    if (!error && data) {
-      setPacientes(data)
+    if (pacientesError || !pacientesData) {
+      setLoading(false)
+      return
     }
+
+    // Obtener datos de usuario para cada paciente
+    const pacientesCompletos = await Promise.all(
+      pacientesData.map(async (paciente) => {
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("id_usuario, nombre, apellido, dni, correo, password, rol")
+          .eq("id_usuario", paciente.id_paciente)
+          .single()
+
+        return {
+          ...paciente,
+          usuario: usuarioData || {},
+        }
+      })
+    )
+
+    setPacientes(pacientesCompletos)
     setLoading(false)
   }
 
@@ -58,32 +80,44 @@ export function ListaPacientes() {
   }
 
   const handleSavePaciente = async () => {
-    if (!formData.nombre || !formData.apellido || !formData.dni) {
+    if (!formData.nombre || !formData.apellido || !formData.dni || !formData.correo) {
       toast({
         title: "⚠️ Campos incompletos",
-        description: "Por favor completa todos los campos requeridos (*)",
+        description: "Por favor completa: Nombre, Apellido, DNI y Correo Electrónico",
         variant: "destructive",
       })
       return
     }
 
     const supabase = createClient()
-    const password = editingPaciente ? editingPaciente.password_hash : generatePassword(formData.nombre, formData.apellido)
+    
+    // Usar la contraseña proporcionada o generar una por defecto
+    const password = formData.password?.trim() || generatePassword(formData.nombre, formData.apellido)
 
     if (editingPaciente) {
-      // Editar paciente existente
-      const { error } = await supabase
-        .from("usuarios")
+      // Editar paciente existente - actualizar usuario
+      const { error: usuarioError } = await supabase
+        .from("usuario")
         .update({
           nombre: formData.nombre,
           apellido: formData.apellido,
           dni: formData.dni,
-          telefono: formData.telefono,
-          email: formData.email || null,
+          correo: formData.correo,
         })
-        .eq("id", editingPaciente.id)
+        .eq("id_usuario", editingPaciente.id_paciente) // id_paciente = id_usuario
 
-      if (!error) {
+      // Actualizar tabla paciente
+      if (!usuarioError) {
+        await supabase
+          .from("paciente")
+          .update({
+            dni: formData.dni,
+            fecha_nacimiento: formData.fecha_nacimiento || null,
+          })
+          .eq("id_paciente", editingPaciente.id_paciente)
+      }
+
+      if (!usuarioError) {
         toast({
           title: "✅ Paciente actualizado",
           description: `Se actualizó correctamente a ${formData.nombre} ${formData.apellido}`,
@@ -99,31 +133,41 @@ export function ListaPacientes() {
         })
       }
     } else {
-      // Crear nuevo paciente
-      const { error } = await supabase.from("usuarios").insert([
-        {
+      // Crear nuevo paciente - primero crear usuario
+      const { data: newUser, error: usuarioError } = await supabase
+        .from("usuario")
+        .insert({
           nombre: formData.nombre,
           apellido: formData.apellido,
           dni: formData.dni,
-          telefono: formData.telefono,
-          email: formData.email || null,
-          password_hash: password,
-          rol: "paciente",
-        },
-      ])
+          correo: formData.correo,
+          password: password,
+          rol: "Paciente",
+        })
+        .select()
+        .single()
 
-      if (!error) {
+      if (!usuarioError && newUser) {
+        // Crear registro en tabla paciente
+        await supabase.from("paciente").insert({
+          id_paciente: newUser.id_usuario,
+          dni: formData.dni,
+          fecha_nacimiento: formData.fecha_nacimiento || null,
+        })
+
         toast({
-          title: "✅ Paciente registrado",
-          description: `${formData.nombre} ${formData.apellido} fue registrado con DNI: ${formData.dni}`,
+          title: "✅ Paciente registrado exitosamente",
+          description: `Correo: ${formData.correo} | Contraseña: ${password}`,
+          duration: 10000, // Mostrar por 10 segundos
         })
         loadPacientes()
         setOpenDialog(false)
         resetForm()
       } else {
+        console.error("Error al registrar usuario:", usuarioError)
         toast({
           title: "❌ Error al registrar",
-          description: "No se pudo registrar el paciente. Verifica el DNI no esté duplicado.",
+          description: usuarioError?.message || "No se pudo registrar el paciente. Intenta nuevamente.",
           variant: "destructive",
         })
       }
@@ -133,26 +177,63 @@ export function ListaPacientes() {
   const handleEditPaciente = (paciente: any) => {
     setEditingPaciente(paciente)
     setFormData({
-      nombre: paciente.nombre,
-      apellido: paciente.apellido,
-      dni: paciente.dni,
-      telefono: paciente.telefono || "",
-      email: paciente.email || "",
+      nombre: paciente.usuario?.nombre || "",
+      apellido: paciente.usuario?.apellido || "",
+      dni: paciente.dni || "",
+      correo: paciente.usuario?.correo || "",
+      fecha_nacimiento: paciente.fecha_nacimiento || "",
+      password: paciente.usuario?.password || "",
+      telefono: "",
     })
     setOpenDialog(true)
   }
 
-  const handleDeletePaciente = async (id: string, nombre: string, apellido: string) => {
+  const handleDeletePaciente = async (id: number, nombre: string, apellido: string) => {
     const supabase = createClient()
-    const { error } = await supabase.from("usuarios").delete().eq("id", id)
+    
+    try {
+      // Paso 1: Eliminar registros dependientes en orden
+      // Eliminar historiales clínicos
+      await supabase
+        .from("historialclinico")
+        .delete()
+        .eq("id_paciente", id)
 
-    if (!error) {
+      // Eliminar triajes
+      await supabase
+        .from("triaje")
+        .delete()
+        .eq("id_paciente", id)
+
+      // Eliminar citas
+      await supabase
+        .from("cita")
+        .delete()
+        .eq("id_paciente", id)
+
+      // Paso 2: Eliminar de tabla paciente
+      const { error: pacienteError } = await supabase
+        .from("paciente")
+        .delete()
+        .eq("id_paciente", id)
+
+      if (pacienteError) throw pacienteError
+
+      // Paso 3: Eliminar de tabla usuario
+      const { error: usuarioError } = await supabase
+        .from("usuario")
+        .delete()
+        .eq("id_usuario", id)
+
+      if (usuarioError) throw usuarioError
+
       toast({
         title: "✅ Paciente eliminado",
         description: `${nombre} ${apellido} fue eliminado del sistema`,
       })
       loadPacientes()
-    } else {
+    } catch (error) {
+      console.error("Error al eliminar paciente:", error)
       toast({
         title: "❌ Error al eliminar",
         description: "No se pudo eliminar el paciente. Intenta nuevamente.",
@@ -166,18 +247,21 @@ export function ListaPacientes() {
       nombre: "",
       apellido: "",
       dni: "",
+      correo: "",
+      fecha_nacimiento: "",
+      password: "",
       telefono: "",
-      email: "",
     })
     setEditingPaciente(null)
   }
 
   const filteredPacientes = pacientes.filter((paciente) => {
+    const searchLower = searchTerm.toLowerCase()
     const matchSearch =
-      paciente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      paciente.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      paciente.dni.includes(searchTerm) ||
-      (paciente.email && paciente.email.toLowerCase().includes(searchTerm.toLowerCase()))
+      paciente.usuario?.nombre?.toLowerCase().includes(searchLower) ||
+      paciente.usuario?.apellido?.toLowerCase().includes(searchLower) ||
+      String(paciente.dni || "").includes(searchTerm) ||
+      (paciente.usuario?.correo && paciente.usuario.correo.toLowerCase().includes(searchLower))
 
     return matchSearch
   })
@@ -295,7 +379,7 @@ export function ListaPacientes() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="telefono" className="text-sm font-medium">
-                        Teléfono
+                        Teléfono <span className="text-muted-foreground text-xs">(opcional)</span>
                       </Label>
                       <Input
                         id="telefono"
@@ -307,15 +391,16 @@ export function ListaPacientes() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="email" className="text-sm font-medium">
-                        Correo Electrónico
+                        Correo Electrónico <span className="text-destructive">*</span>
                       </Label>
                       <Input
                         id="email"
                         type="email"
                         placeholder="Ej: paciente@email.com"
-                        value={formData.email}
-                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        value={formData.correo}
+                        onChange={(e) => setFormData({ ...formData, correo: e.target.value })}
                         className="h-11"
+                        required
                       />
                     </div>
                   </div>
@@ -323,21 +408,54 @@ export function ListaPacientes() {
 
                 {/* Sección: Credenciales - Solo para nuevos pacientes */}
                 {!editingPaciente && (
-                  <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
-                    <div className="flex items-start gap-3">
-                      <Key className="w-5 h-5 text-blue-600 mt-0.5" />
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold text-blue-900 dark:text-blue-100">
-                          Credenciales de Acceso
+                  <div className="space-y-4 p-4 bg-linear-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 rounded-lg border-2 border-blue-300 dark:border-blue-700">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-100">
+                      <Key className="w-5 h-5 text-blue-600" />
+                      Credenciales de Acceso al Sistema
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="p-3 bg-white dark:bg-gray-900 rounded-md border border-blue-200 dark:border-blue-800">
+                        <p className="text-xs text-muted-foreground mb-1">Usuario para inicio de sesión:</p>
+                        <p className="text-sm font-bold text-blue-900 dark:text-blue-100">
+                          DNI: <span className="font-mono text-lg">{formData.dni || "Ingrese el DNI arriba"}</span>
                         </p>
-                        <p className="text-sm text-blue-700 dark:text-blue-300">
-                          DNI: <span className="font-mono font-bold">{formData.dni || "________"}</span>
+                      </div>
+                      
+                      <div className="p-3 bg-white dark:bg-gray-900 rounded-md border border-blue-200 dark:border-blue-800">
+                        <p className="text-xs text-muted-foreground mb-1">Correo electrónico:</p>
+                        <p className="text-sm font-bold text-blue-900 dark:text-blue-100 break-all">
+                          <span className="font-mono">{formData.correo || "Ingrese el correo arriba"}</span>
                         </p>
-                        <p className="text-sm text-blue-700 dark:text-blue-300">
-                          Contraseña: <span className="font-mono font-bold">Paciente123!</span>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="password" className="text-sm font-medium flex items-center gap-2">
+                          <span>Contraseña de Acceso</span>
+                          <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                          id="password"
+                          type="text"
+                          placeholder="Ingrese la contraseña"
+                          value={formData.password}
+                          onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                          className="h-11 font-mono text-base bg-white dark:bg-gray-900"
+                        />
+                        <div className="flex items-start gap-2 p-2 bg-amber-50 dark:bg-amber-950/30 rounded border border-amber-200 dark:border-amber-800">
+                          <span className="text-amber-600 text-sm">💡</span>
+                          <p className="text-xs text-amber-700 dark:text-amber-300">
+                            Sugerencia: Si dejas vacío, se usará <strong className="font-mono">Paciente123!</strong>
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="p-3 bg-green-50 dark:bg-green-950/30 rounded border border-green-200 dark:border-green-800">
+                        <p className="text-xs font-semibold text-green-900 dark:text-green-100 mb-1">
+                          ✅ Recuerda anotar estas credenciales
                         </p>
-                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
-                          El paciente podrá cambiar su contraseña después del primer inicio de sesión.
+                        <p className="text-xs text-green-700 dark:text-green-300">
+                          El paciente las necesitará para iniciar sesión en el sistema.
                         </p>
                       </div>
                     </div>
@@ -391,18 +509,18 @@ export function ListaPacientes() {
               </thead>
               <tbody>
                 {filteredPacientes.map((paciente) => (
-                  <tr key={paciente.id} className="border-b hover:bg-muted/50 transition-colors">
+                  <tr key={paciente.id_paciente} className="border-b hover:bg-muted/50 transition-colors">
                     <td className="py-3 px-4 font-semibold">{paciente.dni}</td>
                     <td className="py-3 px-4">
-                      {paciente.nombre} {paciente.apellido}
+                      {paciente.usuario?.nombre} {paciente.usuario?.apellido}
                     </td>
-                    <td className="py-3 px-4 text-muted-foreground">{paciente.email || "-"}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{paciente.telefono || "-"}</td>
+                    <td className="py-3 px-4 text-muted-foreground">{paciente.usuario?.correo || "-"}</td>
+                    <td className="py-3 px-4 text-muted-foreground">-</td>
                     <td className="py-3 px-4">
-                      <code className="text-xs bg-muted px-2 py-1 rounded">{paciente.password_hash}</code>
+                      <code className="text-xs bg-muted px-2 py-1 rounded">{paciente.usuario?.password || "***"}</code>
                     </td>
                     <td className="py-3 px-4 text-muted-foreground">
-                      {new Date(paciente.created_at).toLocaleDateString("es-PE")}
+                      {paciente.fecha_nacimiento ? new Date(paciente.fecha_nacimiento).toLocaleDateString("es-PE") : "-"}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex gap-2">
@@ -418,7 +536,7 @@ export function ListaPacientes() {
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => handleDeletePaciente(paciente.id, paciente.nombre, paciente.apellido)}
+                          onClick={() => handleDeletePaciente(paciente.id_paciente, paciente.usuario?.nombre || "", paciente.usuario?.apellido || "")}
                           className="gap-1 hover:shadow-md transition-all"
                         >
                           <Trash2 className="w-3 h-3" />

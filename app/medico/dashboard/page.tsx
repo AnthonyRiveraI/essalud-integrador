@@ -7,6 +7,7 @@ import { CitasDelDia } from "@/components/medico/citas-del-dia"
 import { HistorialClinicoMedico } from "@/components/medico/historial-clinico-medico"
 import { DarAlta } from "@/components/medico/dar-alta"
 import { GestionarTriaje } from "@/components/medico/gestionar-triaje"
+import { GestionarEmergencias } from "@/components/medico/gestionar-emergencias"
 import { createClient } from "@/lib/supabase/client"
 import { EstadisticasMedico } from "@/components/medico/estadisticas-medico"
 
@@ -25,7 +26,7 @@ export default function MedicoDashboardPage() {
       }
 
       const parsed = JSON.parse(usuarioData)
-      if (parsed.rol !== "medico") {
+      if (parsed.rol !== "Medico") {
         router.push("/")
         return
       }
@@ -35,14 +36,9 @@ export default function MedicoDashboardPage() {
       // Cargar datos del médico
       const supabase = createClient()
       const { data, error } = await supabase
-        .from("medicos")
-        .select(
-          `
-          *,
-          especialidad:especialidades!medicos_especialidad_id_fkey(id, nombre)
-        `,
-        )
-        .eq("usuario_id", parsed.id)
+        .from("medico")
+        .select("*")
+        .eq("id_medico", parsed.id_usuario)
         .single()
 
       if (!error && data) {
@@ -62,7 +58,7 @@ export default function MedicoDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-primary/10">
+    <div className="min-h-screen bg-linear-to-br from-primary/5 via-background to-primary/10">
       <header className="bg-primary text-primary-foreground py-4 shadow-lg">
         <div className="container mx-auto px-4">
           <h1 className="text-2xl font-bold">ESSALUD - Portal del Médico</h1>
@@ -73,29 +69,31 @@ export default function MedicoDashboardPage() {
         activeSection={activeSection}
         onSectionChange={setActiveSection}
         userName={`${usuario.nombre} ${usuario.apellido}`}
-        especialidad={medicoData.especialidad.nombre}
+        especialidad={medicoData.especialidad}
       />
 
       <main className="container mx-auto px-4 py-8">
         {activeSection === "citas" && (
           <>
-            <EstadisticasMedico medicoId={medicoData.id} />
+            <EstadisticasMedico medicoId={medicoData.id_medico} />
             <div className="mt-8">
               <CitasDelDia
-                medicoId={medicoData.id}
-                maxCitasDia={medicoData.max_citas_dia}
-                minutosPorCita={medicoData.minutos_por_cita}
+                medicoId={medicoData.id_medico}
+                maxCitasDia={medicoData.max_pacientes_dia}
               />
             </div>
           </>
         )}
         {activeSection === "historial" && (
-          <HistorialClinicoMedico medicoId={medicoData.id} especialidadId={medicoData.especialidad.id} />
+          <HistorialClinicoMedico medicoId={medicoData.id_medico} especialidad={medicoData.especialidad} />
         )}
-        {activeSection === "triaje" && medicoData.especialidad.nombre === "Emergencia" && (
-          <GestionarTriaje medicoId={medicoData.id} />
+        {activeSection === "emergencias" && (
+          <GestionarEmergencias medicoId={medicoData.id_medico} />
         )}
-        {activeSection === "altas" && medicoData.especialidad.nombre === "Emergencia" && <DarAlta />}
+        {activeSection === "triaje" && medicoData.especialidad === "Emergencia" && (
+          <GestionarTriaje medicoId={medicoData.id_medico} />
+        )}
+        {activeSection === "altas" && medicoData.especialidad === "Emergencia" && <DarAlta />}
       </main>
     </div>
   )

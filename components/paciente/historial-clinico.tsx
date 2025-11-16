@@ -20,23 +20,50 @@ export function HistorialClinico({ pacienteId }: HistorialClinicoProps) {
   const loadHistorial = async () => {
     setLoading(true)
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("historial_clinico")
-      .select(
-        `
-        *,
-        medico:medicos!historial_clinico_medico_id_fkey(
-          usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido)
-        ),
-        especialidad:especialidades!historial_clinico_especialidad_id_fkey(nombre)
-      `,
-      )
-      .eq("paciente_id", pacienteId)
+    
+    // Primero obtener el historial
+    const { data: historialData, error: historialError } = await supabase
+      .from("historialclinico")
+      .select("*")
+      .eq("id_paciente", pacienteId)
       .order("fecha", { ascending: false })
 
-    if (!error && data) {
-      setHistorial(data)
+    if (historialError || !historialData) {
+      setLoading(false)
+      return
     }
+
+    // Luego obtener datos del médico para cada registro
+    const historialConMedico = await Promise.all(
+      historialData.map(async (registro) => {
+        if (!registro.id_medico) {
+          return registro
+        }
+
+        const { data: medicoData } = await supabase
+          .from("medico")
+          .select("*")
+          .eq("id_medico", registro.id_medico)
+          .single()
+
+        // medico.id_medico ES el id_usuario
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("nombre, apellido")
+          .eq("id_usuario", medicoData?.id_medico)
+          .single()
+
+        return {
+          ...registro,
+          medico: {
+            ...medicoData,
+            usuario: usuarioData
+          }
+        }
+      })
+    )
+
+    setHistorial(historialConMedico)
     setLoading(false)
   }
 
@@ -67,8 +94,8 @@ export function HistorialClinico({ pacienteId }: HistorialClinicoProps) {
           </div>
         ) : (
           <div className="space-y-4">
-            {historial.map((registro) => (
-              <div key={registro.id} className="border rounded-lg p-4 space-y-3">
+            {historial.map((registro, index) => (
+              <div key={registro.id_historial || index} className="border rounded-lg p-4 space-y-3">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
@@ -77,7 +104,7 @@ export function HistorialClinico({ pacienteId }: HistorialClinicoProps) {
                         Dr(a). {registro.medico.usuario.nombre} {registro.medico.usuario.apellido}
                       </h3>
                     </div>
-                    <p className="text-sm text-muted-foreground">{registro.especialidad.nombre}</p>
+                    <p className="text-sm text-muted-foreground">{registro.especialidad}</p>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Calendar className="w-4 h-4" />
@@ -91,20 +118,13 @@ export function HistorialClinico({ pacienteId }: HistorialClinicoProps) {
                     <p className="text-sm text-muted-foreground">{registro.diagnostico}</p>
                   </div>
 
-                  {registro.receta_medica && (
+                  {registro.receta && (
                     <div>
                       <h4 className="font-semibold text-sm mb-1 flex items-center gap-2">
                         <Pill className="w-4 h-4" />
                         Receta Médica:
                       </h4>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{registro.receta_medica}</p>
-                    </div>
-                  )}
-
-                  {registro.observaciones && (
-                    <div>
-                      <h4 className="font-semibold text-sm mb-1">Observaciones:</h4>
-                      <p className="text-sm text-muted-foreground">{registro.observaciones}</p>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{registro.receta}</p>
                     </div>
                   )}
                 </div>

@@ -3,18 +3,15 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { AdministradorDashboardNav } from "@/components/administrador/dashboard-nav"
-import { ListaPacientes } from "@/components/administrador/lista-pacientes"
-import { ListaMedicos } from "@/components/administrador/lista-medicos"
+import { GestionUsuarios } from "@/components/administrador/gestion-usuarios"
 import { HistorialesCompletos } from "@/components/administrador/historiales-completos"
-import { ListaAsistentes } from "@/components/administrador/lista-asistentes"
-import { RegistrarUsuario } from "@/components/administrador/registrar-usuario"
 import { EstadisticasSistema } from "@/components/administrador/estadisticas-sistema"
 import { DashboardOverview } from "@/components/administrador/dashboard-overview"
 
 export default function AdministradorDashboardPage() {
   const router = useRouter()
   const [usuario, setUsuario] = useState<any>(null)
-  const [activeSection, setActiveSection] = useState("pacientes")
+  const [activeSection, setActiveSection] = useState("inicio")
 
   useEffect(() => {
     const usuarioData = localStorage.getItem("usuario")
@@ -24,7 +21,7 @@ export default function AdministradorDashboardPage() {
     }
 
     const parsed = JSON.parse(usuarioData)
-    if (parsed.rol !== "administrador") {
+    if (parsed.rol !== "Administrador") {
       router.push("/")
       return
     }
@@ -41,7 +38,7 @@ export default function AdministradorDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-primary/10">
+    <div className="min-h-screen bg-linear-to-br from-primary/5 via-background to-primary/10">
       <header className="bg-primary text-primary-foreground py-4 shadow-lg">
         <div className="container mx-auto px-4">
           <h1 className="text-2xl font-bold">ESSALUD - Portal del Administrador</h1>
@@ -55,21 +52,16 @@ export default function AdministradorDashboardPage() {
       />
 
       <main className="container mx-auto px-4 py-8">
-        {activeSection === "pacientes" && (
+        {activeSection === "inicio" && (
           <>
             <EstadisticasSistema />
             <div className="mt-8">
               <DashboardOverview />
             </div>
-            <div className="mt-8">
-              <ListaPacientes />
-            </div>
           </>
         )}
-        {activeSection === "registrar" && <RegistrarUsuario />}
-        {activeSection === "medicos" && <ListaMedicos />}
+        {activeSection === "usuarios" && <GestionUsuarios />}
         {activeSection === "historial" && <HistorialesCompletos />}
-        {activeSection === "asistentes" && <ListaAsistentes />}
       </main>
     </div>
   )

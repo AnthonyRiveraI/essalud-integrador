@@ -23,10 +23,10 @@ export async function loginUser(credentials: LoginCredentials) {
   const isDNI = /^\d{8}$/.test(credentials.identifier)
 
   const { data: usuario, error } = await supabase
-    .from("usuarios")
+    .from("usuario")
     .select("*")
-    .eq(isDNI ? "dni" : "email", credentials.identifier)
-    .eq("password_hash", credentials.password) // En producción, usar hash real
+    .eq(isDNI ? "dni" : "correo", credentials.identifier)
+    .eq("password", credentials.password)
     .single()
 
   if (error || !usuario) {
@@ -40,17 +40,14 @@ export async function registerPaciente(data: RegisterData) {
   const supabase = createClient()
 
   const { data: usuario, error } = await supabase
-    .from("usuarios")
+    .from("usuario")
     .insert({
-      dni: data.dni,
-      email: data.email,
-      password_hash: data.password, // En producción, usar hash
+      dni: Number.parseInt(data.dni),
+      correo: data.email,
+      password: data.password,
       nombre: data.nombre,
       apellido: data.apellido,
-      telefono: data.telefono,
-      fecha_nacimiento: data.fechaNacimiento,
-      direccion: data.direccion,
-      rol: "paciente",
+      rol: "Paciente",
     })
     .select()
     .single()

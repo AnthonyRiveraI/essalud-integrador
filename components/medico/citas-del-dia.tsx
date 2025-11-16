@@ -11,12 +11,11 @@ import { Calendar, Clock, User, MapPin, CheckCircle, Search } from "lucide-react
 import { useToast } from "@/hooks/use-toast"
 
 interface CitasDelDiaProps {
-  medicoId: string
+  medicoId: number
   maxCitasDia: number
-  minutosPorCita: number
 }
 
-export function CitasDelDia({ medicoId, maxCitasDia, minutosPorCita }: CitasDelDiaProps) {
+export function CitasDelDia({ medicoId, maxCitasDia }: CitasDelDiaProps) {
   const { toast } = useToast()
   const [citas, setCitas] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,29 +39,53 @@ export function CitasDelDia({ medicoId, maxCitasDia, minutosPorCita }: CitasDelD
       fechaFormateada: new Date(searchDate).toLocaleDateString('es-PE')
     })
 
-    const { data, error } = await supabase
-      .from("citas")
-      .select(
-        `
-        *,
-        paciente:usuarios!citas_paciente_id_fkey(nombre, apellido, dni, telefono),
-        especialidad:especialidades!citas_especialidad_id_fkey(nombre)
-      `,
-      )
-      .eq("medico_id", medicoId)
+    // Obtener citas
+    const { data: citasData, error: citasError } = await supabase
+      .from("cita")
+      .select("*")
+      .eq("id_medico", medicoId)
       .eq("fecha", searchDate)
-      .neq("estado", "cancelada")
+      .neq("estado", "Cancelada")
       .order("hora", { ascending: true })
 
     console.log('📊 Resultado de citas:', {
-      encontradas: data?.length || 0,
-      citas: data,
-      error: error
+      encontradas: citasData?.length || 0,
+      citas: citasData,
+      error: citasError
     })
 
-    if (!error && data) {
-      setCitas(data)
+    if (citasError || !citasData) {
+      setCitas([])
+      setLoading(false)
+      return
     }
+
+    // Obtener datos de paciente para cada cita
+    const citasConPaciente = await Promise.all(
+      citasData.map(async (cita) => {
+        const { data: pacienteData } = await supabase
+          .from("paciente")
+          .select("*")
+          .eq("id_paciente", cita.id_paciente)
+          .single()
+
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("nombre, apellido, dni, telefono")
+          .eq("id_usuario", pacienteData?.id_paciente)
+          .single()
+
+        return {
+          ...cita,
+          paciente: {
+            ...pacienteData,
+            ...usuarioData
+          }
+        }
+      })
+    )
+
+    setCitas(citasConPaciente)
     setLoading(false)
   }
 
@@ -78,9 +101,12 @@ export function CitasDelDia({ medicoId, maxCitasDia, minutosPorCita }: CitasDelD
     loadCitas(hoy)
   }
 
-  const handleMarcarAtendido = async (citaId: string) => {
+  const handleMarcarAtendido = async (citaId: number) => {
     const supabase = createClient()
-    const { error } = await supabase.from("citas").update({ atendido: true, estado: "completada" }).eq("id", citaId)
+    const { error } = await supabase
+      .from("cita")
+      .update({ estado: "Completada" })
+      .eq("id_cita", citaId)
 
     if (error) {
       toast({
@@ -118,7 +144,7 @@ export function CitasDelDia({ medicoId, maxCitasDia, minutosPorCita }: CitasDelD
               Mis Citas del Día
             </CardTitle>
             <CardDescription>
-              <span className="font-semibold text-primary">{citas.length}</span> de {maxCitasDia} citas programadas • {minutosPorCita} min por cita
+              <span className="font-semibold text-primary">{citas.length}</span> de {maxCitasDia} citas programadas
             </CardDescription>
           </div>
           <Badge variant={citas.length >= maxCitasDia ? "destructive" : citas.length > maxCitasDia * 0.7 ? "default" : "secondary"}>

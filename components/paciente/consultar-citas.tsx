@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { createClient } from "@/lib/supabase/client"
 import { Calendar, Clock, MapPin, Trash2, Edit } from "lucide-react"
@@ -16,6 +18,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 interface ConsultarCitasProps {
   pacienteId: string
@@ -25,7 +35,11 @@ export function ConsultarCitas({ pacienteId }: ConsultarCitasProps) {
   const { toast } = useToast()
   const [citas, setCitas] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [reprogramarCita, setReprogramarCita] = useState<any | null>(null)
+  const [nuevaFecha, setNuevaFecha] = useState("")
+  const [nuevaHora, setNuevaHora] = useState("")
+  const [loadingReprogramar, setLoadingReprogramar] = useState(false)
 
   useEffect(() => {
     loadCitas()
@@ -34,25 +48,48 @@ export function ConsultarCitas({ pacienteId }: ConsultarCitasProps) {
   const loadCitas = async () => {
     setLoading(true)
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("citas")
-      .select(
-        `
-        *,
-        medico:medicos!citas_medico_id_fkey(
-          usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido)
-        ),
-        especialidad:especialidades!citas_especialidad_id_fkey(nombre)
-      `,
-      )
-      .eq("paciente_id", pacienteId)
-      .neq("estado", "cancelada")
+    
+    // Primero obtener las citas
+    const { data: citasData, error: citasError } = await supabase
+      .from("cita")
+      .select("*")
+      .eq("id_paciente", pacienteId)
+      .neq("estado", "Cancelada") // Valores válidos: 'Pendiente', 'Completada', 'Cancelada'
       .order("fecha", { ascending: true })
       .order("hora", { ascending: true })
 
-    if (!error && data) {
-      setCitas(data)
+    if (citasError || !citasData) {
+      setLoading(false)
+      return
     }
+
+    // Luego obtener datos del médico para cada cita
+    const citasConMedico = await Promise.all(
+      citasData.map(async (cita) => {
+        const { data: medicoData } = await supabase
+          .from("medico")
+          .select("*")
+          .eq("id_medico", cita.id_medico)
+          .single()
+
+        // medico.id_medico ES el id_usuario
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("nombre, apellido")
+          .eq("id_usuario", medicoData?.id_medico)
+          .single()
+
+        return {
+          ...cita,
+          medico: {
+            ...medicoData,
+            usuario: usuarioData
+          }
+        }
+      })
+    )
+
+    setCitas(citasConMedico)
     setLoading(false)
   }
 
@@ -60,7 +97,7 @@ export function ConsultarCitas({ pacienteId }: ConsultarCitasProps) {
     if (!deleteId) return
 
     const supabase = createClient()
-    const { error } = await supabase.from("citas").update({ estado: "cancelada" }).eq("id", deleteId)
+    const { error } = await supabase.from("cita").update({ estado: "Cancelada" }).eq("id_cita", deleteId)
 
     if (error) {
       toast({
@@ -76,6 +113,54 @@ export function ConsultarCitas({ pacienteId }: ConsultarCitasProps) {
       loadCitas()
     }
     setDeleteId(null)
+  }
+
+  const handleReprogramar = async () => {
+    if (!reprogramarCita || !nuevaFecha || !nuevaHora) {
+      toast({
+        title: "⚠️ Campos incompletos",
+        description: "Por favor complete la nueva fecha y hora",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setLoadingReprogramar(true)
+    const supabase = createClient()
+    
+    const { error } = await supabase
+      .from("cita")
+      .update({ 
+        fecha: nuevaFecha,
+        hora: nuevaHora
+      })
+      .eq("id_cita", reprogramarCita.id_cita)
+
+    if (error) {
+      toast({
+        title: "❌ Error al reprogramar",
+        description: "No se pudo reprogramar la cita. Intenta nuevamente.",
+        variant: "destructive",
+      })
+    } else {
+      toast({
+        title: "✅ Cita reprogramada",
+        description: `La cita ha sido reprogramada para el ${new Date(nuevaFecha).toLocaleDateString('es-PE')} a las ${nuevaHora}`,
+      })
+      loadCitas()
+      setReprogramarCita(null)
+      setNuevaFecha("")
+      setNuevaHora("")
+    }
+    setLoadingReprogramar(false)
+  }
+
+  const abrirReprogramar = (cita: any) => {
+    setReprogramarCita(cita)
+    // Convertir fecha a formato yyyy-MM-dd para el input type="date"
+    const fechaFormateada = cita.fecha.split('T')[0]
+    setNuevaFecha(fechaFormateada)
+    setNuevaHora(cita.hora)
   }
 
   if (loading) {
@@ -107,24 +192,24 @@ export function ConsultarCitas({ pacienteId }: ConsultarCitasProps) {
           ) : (
             <div className="space-y-4">
               {citas.map((cita) => (
-                <div key={cita.id} className="border rounded-lg p-4 space-y-3">
+                <div key={cita.id_cita} className="border rounded-lg p-4 space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
                       <h3 className="font-semibold text-lg">
-                        Dr(a). {cita.medico.usuario.nombre} {cita.medico.usuario.apellido}
+                        Dr(a). {cita.medico?.usuario?.nombre || "Sin asignar"} {cita.medico?.usuario?.apellido || ""}
                       </h3>
-                      <p className="text-sm text-muted-foreground">{cita.especialidad.nombre}</p>
+                      <p className="text-sm text-muted-foreground">{cita.medico?.especialidad || "Medicina General"}</p>
                     </div>
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        cita.estado === "programada"
+                        cita.estado === "Pendiente"
                           ? "bg-primary/10 text-primary"
-                          : cita.estado === "completada"
+                          : cita.estado === "Completada"
                             ? "bg-green-100 text-green-700"
                             : "bg-yellow-100 text-yellow-700"
                       }`}
                     >
-                      {cita.estado.charAt(0).toUpperCase() + cita.estado.slice(1)}
+                      {cita.estado}
                     </span>
                   </div>
 
@@ -148,13 +233,23 @@ export function ConsultarCitas({ pacienteId }: ConsultarCitasProps) {
                     </div>
                   </div>
 
-                  {cita.estado === "programada" && (
+                  {cita.estado === "Pendiente" && (
                     <div className="flex gap-2 pt-2">
-                      <Button variant="outline" size="sm" className="flex-1 bg-transparent">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="flex-1 bg-transparent"
+                        onClick={() => abrirReprogramar(cita)}
+                      >
                         <Edit className="w-4 h-4 mr-2" />
                         Reprogramar
                       </Button>
-                      <Button variant="destructive" size="sm" className="flex-1" onClick={() => setDeleteId(cita.id)}>
+                      <Button 
+                        variant="destructive" 
+                        size="sm" 
+                        className="flex-1" 
+                        onClick={() => setDeleteId(cita.id_cita)}
+                      >
                         <Trash2 className="w-4 h-4 mr-2" />
                         Cancelar
                       </Button>
@@ -181,6 +276,56 @@ export function ConsultarCitas({ pacienteId }: ConsultarCitasProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!reprogramarCita} onOpenChange={() => setReprogramarCita(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reprogramar Cita</DialogTitle>
+            <DialogDescription>
+              Seleccione la nueva fecha y hora para su cita
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="nueva-fecha">Nueva Fecha</Label>
+              <Input
+                id="nueva-fecha"
+                type="date"
+                value={nuevaFecha}
+                onChange={(e) => setNuevaFecha(e.target.value)}
+                min={new Date().toISOString().split('T')[0]}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="nueva-hora">Nueva Hora</Label>
+              <Input
+                id="nueva-hora"
+                type="time"
+                value={nuevaHora}
+                onChange={(e) => setNuevaHora(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setReprogramarCita(null)}
+              disabled={loadingReprogramar}
+            >
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleReprogramar}
+              disabled={loadingReprogramar}
+            >
+              {loadingReprogramar ? "Guardando..." : "Confirmar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

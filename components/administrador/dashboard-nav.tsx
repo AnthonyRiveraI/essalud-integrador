@@ -25,11 +25,9 @@ export function AdministradorDashboardNav({ activeSection, onSectionChange, user
   }
 
   const sections = [
-    { id: "pacientes", label: "Lista de Pacientes", icon: Users2 },
-    { id: "registrar", label: "Registrar Usuario", icon: UserPlus },
-    { id: "medicos", label: "Lista de Médicos", icon: Users },
-    { id: "historial", label: "Historiales Clínicos", icon: FileText },
-    { id: "asistentes", label: "Asistentes de Enfermería", icon: UserCog },
+    { id: "inicio", label: "Inicio", icon: Shield },
+    { id: "usuarios", label: "Usuarios", icon: Users },
+    { id: "historial", label: "Historiales", icon: FileText },
   ]
 
   return (
@@ -60,7 +58,7 @@ export function AdministradorDashboardNav({ activeSection, onSectionChange, user
                 variant={activeSection === section.id ? "default" : "outline"}
                 size="sm"
                 onClick={() => onSectionChange(section.id)}
-                className="flex-shrink-0"
+                className="shrink-0"
               >
                 <Icon className="w-4 h-4 mr-2" />
                 {section.label}

@@ -19,35 +19,83 @@ export function HistorialGeneral() {
   const loadHistorial = async () => {
     setLoading(true)
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("historial_clinico")
-      .select(
-        `
-        *,
-        paciente:usuarios!historial_clinico_paciente_id_fkey(id, nombre, apellido, dni),
-        medico:medicos!historial_clinico_medico_id_fkey(
-          usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido)
-        ),
-        especialidad:especialidades!historial_clinico_especialidad_id_fkey(nombre)
-      `,
-      )
+    
+    console.log('🔍 Cargando historial general...')
+    
+    // Obtener historial
+    const { data: historialData, error: historialError } = await supabase
+      .from("historialclinico")
+      .select("*")
       .order("fecha", { ascending: false })
       .limit(100)
 
-    if (!error && data) {
-      setHistorial(data)
+    console.log('📊 Historial obtenido:', { 
+      registros: historialData?.length || 0, 
+      error: historialError 
+    })
+
+    if (historialError || !historialData) {
+      setHistorial([])
+      setLoading(false)
+      return
     }
+
+    // Obtener datos completos para cada registro
+    const historialCompleto = await Promise.all(
+      historialData.map(async (registro) => {
+        // Obtener datos del paciente
+        const { data: pacienteData } = await supabase
+          .from("paciente")
+          .select("*")
+          .eq("id_paciente", registro.id_paciente)
+          .single()
+
+        const { data: usuarioPaciente } = await supabase
+          .from("usuario")
+          .select("nombre, apellido, dni")
+          .eq("id_usuario", pacienteData?.id_paciente)
+          .single()
+
+        // Obtener datos del médico
+        const { data: medicoData } = await supabase
+          .from("medico")
+          .select("*")
+          .eq("id_medico", registro.id_medico)
+          .single()
+
+        const { data: usuarioMedico } = await supabase
+          .from("usuario")
+          .select("nombre, apellido")
+          .eq("id_usuario", medicoData?.id_medico)
+          .single()
+
+        return {
+          ...registro,
+          paciente: {
+            ...pacienteData,
+            ...usuarioPaciente
+          },
+          medico: {
+            ...medicoData,
+            usuario: usuarioMedico
+          }
+        }
+      })
+    )
+
+    console.log('✅ Historial completo cargado:', historialCompleto.length)
+    setHistorial(historialCompleto)
     setLoading(false)
   }
 
   const filteredHistorial = historial.filter(
     (h) =>
-      h.paciente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.paciente.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.paciente.dni.includes(searchTerm) ||
-      h.medico.usuario.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.medico.usuario.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      h.especialidad.nombre.toLowerCase().includes(searchTerm.toLowerCase()),
+      h.paciente?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.paciente?.apellido?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.paciente?.dni?.includes(searchTerm) ||
+      h.medico?.usuario?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.medico?.usuario?.apellido?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      h.medico?.especialidad?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
   if (loading) {
@@ -114,26 +162,26 @@ export function HistorialGeneral() {
                 </TableHeader>
                 <TableBody>
                   {filteredHistorial.map((registro) => (
-                    <TableRow key={registro.id}>
-                      <TableCell className="font-mono text-xs">{registro.id.slice(0, 8)}...</TableCell>
+                    <TableRow key={registro.id_historial}>
+                      <TableCell className="font-mono text-xs">{registro.id_historial}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <User className="w-4 h-4 text-muted-foreground" />
                           <span className="font-medium">
-                            {registro.paciente.nombre} {registro.paciente.apellido}
+                            {registro.paciente?.nombre} {registro.paciente?.apellido}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell>{registro.paciente.dni}</TableCell>
+                      <TableCell>{registro.paciente?.dni}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Stethoscope className="w-4 h-4 text-muted-foreground" />
                           <span>
-                            Dr(a). {registro.medico.usuario.nombre} {registro.medico.usuario.apellido}
+                            Dr(a). {registro.medico?.usuario?.nombre} {registro.medico?.usuario?.apellido}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell>{registro.especialidad.nombre}</TableCell>
+                      <TableCell>{registro.medico?.especialidad || '-'}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Calendar className="w-4 h-4 text-muted-foreground" />
@@ -144,10 +192,10 @@ export function HistorialGeneral() {
                         <p className="text-sm text-muted-foreground truncate">{registro.diagnostico}</p>
                       </TableCell>
                       <TableCell className="max-w-xs">
-                        {registro.receta_medica ? (
+                        {registro.receta ? (
                           <div className="flex items-center gap-2">
                             <Pill className="w-4 h-4 text-muted-foreground" />
-                            <p className="text-sm text-muted-foreground truncate">{registro.receta_medica}</p>
+                            <p className="text-sm text-muted-foreground truncate">{registro.receta}</p>
                           </div>
                         ) : (
                           <span className="text-sm text-muted-foreground">-</span>

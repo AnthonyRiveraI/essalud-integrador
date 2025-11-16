@@ -24,25 +24,29 @@ export function EstadisticasSistema() {
 
     // Total de pacientes
     const { count: totalPacientes } = await supabase
-      .from("usuarios")
-      .select("*", { count: "exact" })
-      .eq("rol", "paciente")
+      .from("paciente")
+      .select("*", { count: "exact", head: true })
 
     // Total de médicos
-    const { count: totalMedicos } = await supabase.from("medicos").select("*", { count: "exact" })
+    const { count: totalMedicos } = await supabase
+      .from("medico")
+      .select("*", { count: "exact", head: true })
 
     // Citas hoy
     const { count: citasHoy } = await supabase
-      .from("citas")
-      .select("*", { count: "exact" })
+      .from("cita")
+      .select("*", { count: "exact", head: true })
       .eq("fecha", today)
-      .neq("estado", "cancelada")
+      .neq("estado", "Cancelada")
 
-    // Emergencias activas
-    const { count: emergenciasActivas } = await supabase
+    // Emergencias activas (en triaje) - contar todos los registros de triaje
+    const { count: emergenciasActivas, error: emergenciasError } = await supabase
       .from("triaje")
-      .select("*", { count: "exact" })
-      .eq("estado", "en_atencion")
+      .select("*", { count: "exact", head: true })
+
+    if (emergenciasError) {
+      console.log("Error cargando emergencias:", emergenciasError)
+    }
 
     setStats({
       totalPacientes: totalPacientes || 0,

@@ -32,7 +32,7 @@ export default function MedicoLoginPage() {
         password: formData.password,
       })
 
-      if (usuario.rol !== "medico") {
+      if (usuario.rol !== "Medico") {
         toast({
           title: "Usuario no registrado",
           description: "Las credenciales ingresadas no corresponden a un médico registrado",
@@ -47,6 +47,7 @@ export default function MedicoLoginPage() {
         title: "Bienvenido",
         description: `Dr(a). ${usuario.nombre} ${usuario.apellido}`,
       })
+      
       router.push("/medico/dashboard")
     } catch (error) {
       toast({
@@ -54,7 +55,6 @@ export default function MedicoLoginPage() {
         description: "Las credenciales ingresadas no son válidas",
         variant: "destructive",
       })
-    } finally {
       setLoading(false)
     }
   }

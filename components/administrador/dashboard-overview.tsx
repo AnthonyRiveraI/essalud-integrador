@@ -16,20 +16,43 @@ export function DashboardOverview() {
   const loadData = async () => {
     const supabase = createClient()
 
-    // Obtener citas por especialidad
+    // Obtener todas las citas
     const { data: citasData } = await supabase
-      .from("citas")
-      .select("especialidad_id, especialidades!citas_especialidad_id_fkey(nombre)")
-      .neq("estado", "cancelada")
+      .from("cita")
+      .select("id_medico")
+      .neq("estado", "Cancelada")
+
+    if (!citasData) {
+      setLoading(false)
+      return
+    }
+
+    // Obtener datos de médicos
+    const medicosMap = new Map()
+    
+    for (const cita of citasData) {
+      if (!medicosMap.has(cita.id_medico)) {
+        const { data: medicoData } = await supabase
+          .from("medico")
+          .select("especialidad")
+          .eq("id_medico", cita.id_medico)
+          .single()
+        
+        if (medicoData) {
+          const especialidad = medicoData.especialidad || "Sin especialidad"
+          medicosMap.set(cita.id_medico, especialidad)
+        }
+      }
+    }
 
     // Agrupar por especialidad
-    const especialidadesMap = new Map()
-    citasData?.forEach((cita: any) => {
-      const nombre = cita.especialidades.nombre
-      especialidadesMap.set(nombre, (especialidadesMap.get(nombre) || 0) + 1)
+    const especialidadesCount = new Map()
+    citasData.forEach((cita: any) => {
+      const especialidad = medicosMap.get(cita.id_medico) || "Sin especialidad"
+      especialidadesCount.set(especialidad, (especialidadesCount.get(especialidad) || 0) + 1)
     })
 
-    const chartData = Array.from(especialidadesMap.entries()).map(([nombre, count]) => ({
+    const chartData = Array.from(especialidadesCount.entries()).map(([nombre, count]) => ({
       nombre,
       citas: count,
     }))

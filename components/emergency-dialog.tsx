@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import type React from "react"
 
@@ -11,7 +11,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { createClient } from "@/lib/supabase/client"
-import { AlertCircle, AlertTriangle } from "lucide-react"
+import { AlertCircle, AlertTriangle, Activity, Heart, Thermometer, Wind } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 
 interface EmergencyDialogProps {
   open: boolean
@@ -38,24 +39,62 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
   useEffect(() => {
     if (open) {
       loadCamasDisponibles()
-      if (pacienteId) {
+      if (pacienteId && pacienteNombre) {
         setFormData((prev) => ({
           ...prev,
-          nombreTemporal: pacienteNombre || "",
+          nombreTemporal: pacienteNombre,
         }))
+      } else {
+        setFormData({
+          nombreTemporal: "",
+          edadAproximada: "",
+          nivelUrgencia: "critico",
+          sintomas: "",
+          presionArterial: "",
+          frecuenciaCardiaca: "",
+          temperatura: "",
+          saturacionOxigeno: "",
+        })
       }
     }
   }, [open, pacienteId, pacienteNombre])
 
   const loadCamasDisponibles = async () => {
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("camas_emergencia")
-      .select("*", { count: "exact" })
-      .eq("estado", "disponible")
+    
+    try {
+      console.log('🏥 Consultando camas_emergencia...')
+      
+      const { data, error, count } = await supabase
+        .from("camas_emergencia")
+        .select("*", { count: "exact" })
+        .eq("estado", "disponible")
 
-    if (!error && data) {
-      setCamasDisponibles(data.length)
+      console.log('🔍 Resultado completo:', { 
+        data, 
+        error, 
+        count,
+        errorDetails: error ? JSON.stringify(error) : null,
+        dataLength: data?.length 
+      })
+
+      if (error) {
+        console.error('❌ Error detectado:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+          fullError: error
+        })
+        setCamasDisponibles(0)
+        return
+      }
+
+      console.log('✅ Camas cargadas exitosamente:', count)
+      setCamasDisponibles(count || 0)
+    } catch (err) {
+      console.error('💥 Excepción capturada:', err)
+      setCamasDisponibles(0)
     }
   }
 
@@ -66,20 +105,16 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
     try {
       const supabase = createClient()
 
-      // Verificar camas disponibles
-      const { data: camasDisponiblesData, error: camasError } = await supabase
+      const { data: camasDisponiblesData } = await supabase
         .from("camas_emergencia")
         .select("*")
         .eq("estado", "disponible")
         .limit(1)
 
-      if (camasError) throw camasError
-
       if (!camasDisponiblesData || camasDisponiblesData.length === 0) {
         toast({
-          title: "Sin camas disponibles",
-          description:
-            "No hay camas de emergencia disponibles en este momento. Le recomendamos dirigirse al Hospital Nacional o al Hospital Regional más cercano.",
+          title: "❌ Sin camas disponibles",
+          description: "No hay camas de emergencia disponibles.",
           variant: "destructive",
         })
         setLoading(false)
@@ -91,8 +126,8 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
       const { data: triaje, error: triajeError } = await supabase
         .from("triaje")
         .insert({
-          paciente_id: pacienteId || null,
-          nombre_temporal: !pacienteId ? formData.nombreTemporal || null : null,
+          id_paciente: pacienteId ? parseInt(pacienteId) : null,
+          nombre_temporal: !pacienteId ? formData.nombreTemporal || "Paciente sin identificar" : null,
           edad_aproximada: formData.edadAproximada ? Number.parseInt(formData.edadAproximada) : null,
           nivel_urgencia: formData.nivelUrgencia,
           sintomas: formData.sintomas,
@@ -100,8 +135,17 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
           frecuencia_cardiaca: formData.frecuenciaCardiaca ? Number.parseInt(formData.frecuenciaCardiaca) : null,
           temperatura: formData.temperatura ? Number.parseFloat(formData.temperatura) : null,
           saturacion_oxigeno: formData.saturacionOxigeno ? Number.parseInt(formData.saturacionOxigeno) : null,
-          estado: "en_atencion",
+          estado_paciente: "en_atencion",
           cama_asignada: camaAsignada.numero_cama,
+          fecha: new Date().toISOString(),
+          spo2: formData.saturacionOxigeno ? Number.parseInt(formData.saturacionOxigeno) : null,
+          nivel_riesgo: formData.nivelUrgencia === 'critico' ? 'Critico' : 
+                       formData.nivelUrgencia === 'urgente' ? 'Alto' : 
+                       formData.nivelUrgencia === 'menos_urgente' ? 'Moderado' : 'Bajo',
+          tiempo_atencion: formData.nivelUrgencia === 'critico' ? 'Inmediato' : 
+                          formData.nivelUrgencia === 'urgente' ? '10min' : 
+                          formData.nivelUrgencia === 'menos_urgente' ? '60min' : '3h',
+          observaciones: formData.sintomas
         })
         .select()
         .single()
@@ -109,46 +153,38 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
       if (triajeError) throw triajeError
 
       if (pacienteId) {
-        const { data: especialidadEmergencia } = await supabase
-          .from("especialidades")
-          .select("id")
-          .eq("nombre", "Emergencia")
-          .single()
-
-        const { data: medicosEmergencia } = await supabase
-          .from("medicos")
-          .select("id")
-          .eq("especialidad_id", especialidadEmergencia?.id)
+        const { data: medicoEmergencia } = await supabase
+          .from("medico")
+          .select("id_medico")
+          .eq("especialidad", "Emergencia")
           .limit(1)
+          .maybeSingle()
 
-        if (medicosEmergencia?.[0]?.id && especialidadEmergencia?.id) {
-          await supabase.from("historial_clinico").insert({
-            paciente_id: pacienteId,
-            medico_id: medicosEmergencia[0].id,
-            especialidad_id: especialidadEmergencia.id,
+        if (medicoEmergencia) {
+          await supabase.from("historialclinico").insert({
+            id_paciente: parseInt(pacienteId),
+            id_medico: medicoEmergencia.id_medico,
             fecha: new Date().toISOString(),
-            diagnostico: `Atención de Emergencia - ${formData.nivelUrgencia.toUpperCase()}`,
-            observaciones: formData.sintomas,
+            diagnostico: `Atención de Emergencia - ${formData.nivelUrgencia}`,
+            receta: `PA: ${formData.presionArterial || "N/A"} FC: ${formData.frecuenciaCardiaca || "N/A"} Temp: ${formData.temperatura || "N/A"} SpO2: ${formData.saturacionOxigeno || "N/A"}`,
           })
         }
       }
 
-      // Actualizar estado de la cama
       await supabase
         .from("camas_emergencia")
         .update({
           estado: "ocupada",
-          paciente_triaje_id: triaje.id,
+          id_triaje: triaje.id_triaje,
           fecha_ocupacion: new Date().toISOString(),
         })
-        .eq("id", camaAsignada.id)
+        .eq("id_cama", camaAsignada.id_cama)
 
       toast({
-        title: "Emergencia registrada",
-        description: `Boleto generado. Especialidad: Emergencia, Piso: ${camaAsignada.piso}, Cama: ${camaAsignada.numero_cama}. Camas disponibles: ${camasDisponibles - 1}`,
+        title: "✅ Emergencia registrada",
+        description: `Cama: Piso ${camaAsignada.piso}, ${camaAsignada.numero_cama}`,
       })
 
-      // Resetear formulario
       setFormData({
         nombreTemporal: "",
         edadAproximada: "",
@@ -161,12 +197,11 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
       })
 
       onOpenChange(false)
-      loadCamasDisponibles()
+      await loadCamasDisponibles()
     } catch (error) {
-      console.error("[v0] Error al registrar emergencia:", error)
       toast({
-        title: "Error",
-        description: "No se pudo registrar la emergencia. Intente nuevamente.",
+        title: "❌ Error",
+        description: "No se pudo registrar la emergencia",
         variant: "destructive",
       })
     } finally {
@@ -176,58 +211,52 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-destructive">
-            <AlertCircle className="w-6 h-6" />
-            Formulario de Triaje - Emergencia Crítica
+          <DialogTitle className="flex items-center gap-2">
+            <AlertCircle className="w-6 h-6 text-destructive" />
+            Emergencia Médica
+            {pacienteNombre && <span className="text-sm font-normal">- {pacienteNombre}</span>}
           </DialogTitle>
-          <DialogDescription>Complete la información esencial del paciente para atención inmediata</DialogDescription>
+          <DialogDescription>
+            Complete los datos para atención inmediata
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="bg-muted p-4 rounded-lg flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold text-sm">
-              Camas disponibles: <span className="text-lg text-primary">{camasDisponibles}/20</span>
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {camasDisponibles <= 5 && camasDisponibles > 0
-                ? "Pocas camas disponibles. Atienda con urgencia."
-                : camasDisponibles === 0
-                  ? "No hay camas disponibles. Remita a otro hospital."
-                  : "Camas disponibles para atención."}
-            </p>
-          </div>
+        <div className="bg-muted p-4 rounded-lg flex items-center justify-between">
+          <p className="font-semibold">Camas Disponibles:</p>
+          <Badge variant={camasDisponibles === 0 ? "destructive" : "default"} className="text-lg">
+            {camasDisponibles}/20
+          </Badge>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {!pacienteId && (
-              <div className="space-y-2">
-                <Label htmlFor="nombreTemporal">Nombre del Paciente</Label>
-                <Input
-                  id="nombreTemporal"
-                  placeholder="Nombre completo o 'Desconocido'"
-                  value={formData.nombreTemporal}
-                  onChange={(e) => setFormData({ ...formData, nombreTemporal: e.target.value })}
-                />
-              </div>
-            )}
+          {!pacienteId && (
+            <div>
+              <Label htmlFor="nombreTemporal">Nombre *</Label>
+              <Input
+                id="nombreTemporal"
+                value={formData.nombreTemporal}
+                onChange={(e) => setFormData({ ...formData, nombreTemporal: e.target.value })}
+                required
+              />
+            </div>
+          )}
 
-            <div className="space-y-2">
-              <Label htmlFor="edadAproximada">Edad Aproximada</Label>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="edadAproximada">Edad *</Label>
               <Input
                 id="edadAproximada"
                 type="number"
-                placeholder="Edad en años"
                 value={formData.edadAproximada}
                 onChange={(e) => setFormData({ ...formData, edadAproximada: e.target.value })}
+                required={!pacienteId}
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="nivelUrgencia">Nivel de Urgencia</Label>
+            <div>
+              <Label htmlFor="nivelUrgencia">Nivel de Urgencia *</Label>
               <Select
                 value={formData.nivelUrgencia}
                 onValueChange={(value) => setFormData({ ...formData, nivelUrgencia: value })}
@@ -243,57 +272,58 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
                 </SelectContent>
               </Select>
             </div>
+          </div>
 
-            <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
               <Label htmlFor="presionArterial">Presión Arterial</Label>
               <Input
                 id="presionArterial"
-                placeholder="Ej: 120/80"
+                placeholder="120/80"
                 value={formData.presionArterial}
                 onChange={(e) => setFormData({ ...formData, presionArterial: e.target.value })}
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="frecuenciaCardiaca">Frecuencia Cardíaca (lpm)</Label>
+            <div>
+              <Label htmlFor="frecuenciaCardiaca">Frecuencia Cardíaca</Label>
               <Input
                 id="frecuenciaCardiaca"
                 type="number"
-                placeholder="Ej: 80"
+                placeholder="80"
                 value={formData.frecuenciaCardiaca}
                 onChange={(e) => setFormData({ ...formData, frecuenciaCardiaca: e.target.value })}
               />
             </div>
 
-            <div className="space-y-2">
+            <div>
               <Label htmlFor="temperatura">Temperatura (°C)</Label>
               <Input
                 id="temperatura"
                 type="number"
                 step="0.1"
-                placeholder="Ej: 37.5"
+                placeholder="37.5"
                 value={formData.temperatura}
                 onChange={(e) => setFormData({ ...formData, temperatura: e.target.value })}
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="saturacionOxigeno">Saturación de Oxígeno (%)</Label>
+            <div>
+              <Label htmlFor="saturacionOxigeno">SpO2 (%)</Label>
               <Input
                 id="saturacionOxigeno"
                 type="number"
-                placeholder="Ej: 98"
+                placeholder="98"
                 value={formData.saturacionOxigeno}
                 onChange={(e) => setFormData({ ...formData, saturacionOxigeno: e.target.value })}
               />
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="sintomas">Síntomas y Motivo de Consulta *</Label>
+          <div>
+            <Label htmlFor="sintomas">Síntomas *</Label>
             <Textarea
               id="sintomas"
-              placeholder="Describa los síntomas principales y el motivo de la emergencia..."
               value={formData.sintomas}
               onChange={(e) => setFormData({ ...formData, sintomas: e.target.value })}
               required
@@ -301,12 +331,12 @@ export function EmergencyDialog({ open, onOpenChange, pacienteId, pacienteNombre
             />
           </div>
 
-          <div className="flex gap-2 justify-end">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <div className="flex gap-3 justify-end pt-4">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
               Cancelar
             </Button>
             <Button type="submit" disabled={loading || camasDisponibles === 0}>
-              {loading ? "Registrando..." : "Registrar Emergencia"}
+              {loading ? "Registrando..." : camasDisponibles === 0 ? "Sin Camas" : "Registrar Emergencia"}
             </Button>
           </div>
         </form>

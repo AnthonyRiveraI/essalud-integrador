@@ -19,7 +19,7 @@ export default function AsistenteDashboardPage() {
     }
 
     const parsed = JSON.parse(usuarioData)
-    if (parsed.rol !== "asistente_enfermeria") {
+    if (parsed.rol !== "AsistenteEnfermeria") {
       router.push("/")
       return
     }
@@ -36,7 +36,7 @@ export default function AsistenteDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-primary/10">
+    <div className="min-h-screen bg-linear-to-br from-primary/5 via-background to-primary/10">
       <header className="bg-primary text-primary-foreground py-4 shadow-lg">
         <div className="container mx-auto px-4">
           <h1 className="text-2xl font-bold">ESSALUD - Portal de Asistente de Enfermería</h1>

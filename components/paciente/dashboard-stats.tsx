@@ -25,31 +25,31 @@ export function DashboardStats({ pacienteId }: DashboardStatsProps) {
   const loadStats = async () => {
     const supabase = createClient()
 
-    // Citas próximas
+    // Citas próximas (Pendiente)
     const { count: citasProximas } = await supabase
-      .from("citas")
+      .from("cita")
       .select("*", { count: "exact" })
-      .eq("paciente_id", pacienteId)
-      .eq("estado", "programada")
+      .eq("id_paciente", pacienteId)
+      .eq("estado", "Pendiente")
 
     // Citas completadas
     const { count: citasCompletadas } = await supabase
-      .from("citas")
+      .from("cita")
       .select("*", { count: "exact" })
-      .eq("paciente_id", pacienteId)
-      .eq("estado", "completada")
+      .eq("id_paciente", pacienteId)
+      .eq("estado", "Completada")
 
     // Registros en historial
     const { count: registrosHistorial } = await supabase
-      .from("historial_clinico")
+      .from("historialclinico")
       .select("*", { count: "exact" })
-      .eq("paciente_id", pacienteId)
+      .eq("id_paciente", pacienteId)
 
     // Emergencias atendidas
     const { count: emergenciasAtendidas } = await supabase
       .from("triaje")
       .select("*", { count: "exact" })
-      .eq("paciente_id", pacienteId)
+      .eq("id_paciente", pacienteId)
 
     setStats({
       citasProximas: citasProximas || 0,

@@ -12,57 +12,31 @@ import { useToast } from "@/hooks/use-toast"
 import { UserPlus, User, Mail, Phone, Stethoscope, Pill } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 
-interface Especialidad {
-  id: number
-  nombre: string
-}
+  const generatePassword = (nombre: string, apellido: string, rol: string): string => {
+    if (rol === "Paciente") {
+      return "Paciente123!"
+    } else if (rol === "Medico") {
+      return "Medico123!"
+    } else if (rol === "AsistenteEnfermeria") {
+      return "Enfermera123!"
+    }
+    return "Usuario123!"
+  }
 
 export function RegistrarUsuario() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
   const [generatedPassword, setGeneratedPassword] = useState("")
-  const [especialidades, setEspecialidades] = useState<Especialidad[]>([])
   const [formData, setFormData] = useState({
     nombre: "",
     apellido: "",
-    email: "",
+    correo: "",
     dni: "",
-    telefono: "",
-    rol: "paciente",
-    tipo_asegurado: "asegurado",
+    rol: "Paciente",
+    fecha_nacimiento: "",
     especialidad: "",
-    colegiatura: "",
+    max_pacientes_dia: "20",
   })
-
-  // Cargar especialidades al montar el componente
-  useEffect(() => {
-    const cargarEspecialidades = async () => {
-      const supabase = createClient()
-      const { data, error } = await supabase
-        .from("especialidades")
-        .select("id, nombre")
-        .order("nombre")
-
-      if (!error && data) {
-        setEspecialidades(data)
-      }
-    }
-
-    cargarEspecialidades()
-  }, [])
-
-  const generatePassword = (nombre: string, apellido: string, rol: string): string => {
-    // Generar contraseña según el rol
-    const randomNum = Math.floor(Math.random() * 100)
-    if (rol === "paciente") {
-      return "Paciente123!"
-    } else if (rol === "medico") {
-      return "Medico123!"
-    } else if (rol === "asistente") {
-      return "Enfermera123!"
-    }
-    return `${nombre}${apellido.charAt(0)}${randomNum}!`
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -75,7 +49,17 @@ export function RegistrarUsuario() {
       const supabase = createClient()
 
       // Validaciones específicas por rol
-      if (formData.rol === "paciente" && !formData.dni) {
+      if (!formData.nombre || !formData.apellido) {
+        toast({
+          title: "Error",
+          description: "El nombre y apellido son requeridos",
+          variant: "destructive",
+        })
+        setLoading(false)
+        return
+      }
+
+      if (formData.rol === "Paciente" && !formData.dni) {
         toast({
           title: "Error",
           description: "El DNI es requerido para pacientes",
@@ -85,17 +69,17 @@ export function RegistrarUsuario() {
         return
       }
 
-      if ((formData.rol === "medico" || formData.rol === "asistente") && !formData.email) {
+      if ((formData.rol === "Medico" || formData.rol === "AsistenteEnfermeria") && !formData.correo) {
         toast({
           title: "Error",
-          description: "El email es requerido para médicos y asistentes",
+          description: "El correo es requerido para médicos y asistentes",
           variant: "destructive",
         })
         setLoading(false)
         return
       }
 
-      if (formData.rol === "medico" && !formData.especialidad) {
+      if (formData.rol === "Medico" && !formData.especialidad) {
         toast({
           title: "Error",
           description: "La especialidad es requerida para médicos",
@@ -105,50 +89,42 @@ export function RegistrarUsuario() {
         return
       }
 
-      if (formData.rol === "medico" && !formData.colegiatura) {
-        toast({
-          title: "Error",
-          description: "La colegiatura es requerida para médicos",
-          variant: "destructive",
-        })
-        setLoading(false)
-        return
+      // Generar correo automáticamente si no se proporciona
+      let correoFinal = formData.correo?.trim()
+      if (!correoFinal) {
+        if (formData.rol === "Paciente") {
+          correoFinal = `paciente${formData.dni}@hospital.com`
+        } else if (formData.rol === "Medico") {
+          correoFinal = `medico${formData.dni || Date.now()}@hospital.com`
+        } else if (formData.rol === "AsistenteEnfermeria") {
+          correoFinal = `asistente${formData.dni || Date.now()}@hospital.com`
+        } else {
+          correoFinal = `usuario${Date.now()}@hospital.com`
+        }
       }
-
-      // Mapear el rol al formato de la base de datos
-      const rolBD = formData.rol === "asistente" ? "asistente_enfermeria" : formData.rol
 
       // Preparar datos del usuario
       const usuarioData: any = {
         nombre: formData.nombre,
         apellido: formData.apellido,
-        password_hash: generatedPassword, // La base de datos espera password_hash
-        rol: rolBD,
-        telefono: formData.telefono || null,
-      }
-
-      // Agregar DNI o email según el rol
-      if (formData.rol === "paciente") {
-        usuarioData.dni = formData.dni
-        usuarioData.email = null
-      } else {
-        usuarioData.email = formData.email
-        usuarioData.dni = null
+        password: generatedPassword,
+        rol: formData.rol,
+        dni: formData.dni,
+        correo: correoFinal,
       }
 
       // Insertar usuario y obtener el ID
       const { data: userData, error: userError } = await supabase
-        .from("usuarios")
+        .from("usuario")
         .insert([usuarioData])
         .select()
         .single()
 
       if (userError) {
         if (userError.code === "23505") {
-          // Código de error para violación de unique constraint
           toast({
             title: "Error",
-            description: "El DNI o email ya está registrado en el sistema",
+            description: "El DNI o correo ya está registrado en el sistema",
             variant: "destructive",
           })
         } else {
@@ -158,40 +134,53 @@ export function RegistrarUsuario() {
         return
       }
 
-      // Si es médico, crear registro en tabla medicos
-      if (formData.rol === "medico" && userData) {
-        const { error: medicoError } = await supabase.from("medicos").insert([
+      // Crear registro específico según el rol
+      if (formData.rol === "Paciente" && userData) {
+        const { error: pacienteError } = await supabase.from("paciente").insert([
           {
-            usuario_id: userData.id,
-            especialidad_id: parseInt(formData.especialidad),
-            numero_colegiatura: formData.colegiatura,
+            id_paciente: userData.id_usuario,
+            dni: formData.dni,
+            fecha_nacimiento: formData.fecha_nacimiento || null,
+          },
+        ])
+        
+        if (pacienteError) {
+          await supabase.from("usuario").delete().eq("id_usuario", userData.id_usuario)
+          throw pacienteError
+        }
+      }
+
+      if (formData.rol === "Medico" && userData) {
+        const { error: medicoError } = await supabase.from("medico").insert([
+          {
+            id_medico: userData.id_usuario,
+            especialidad: formData.especialidad,
+            max_pacientes_dia: parseInt(formData.max_pacientes_dia),
           },
         ])
         
         if (medicoError) {
-          // Si falla la creación del médico, eliminar el usuario creado
-          await supabase.from("usuarios").delete().eq("id", userData.id)
+          await supabase.from("usuario").delete().eq("id_usuario", userData.id_usuario)
           throw medicoError
         }
       }
 
       toast({
         title: "✅ Usuario Registrado Exitosamente",
-        description: `${formData.nombre} ${formData.apellido} ha sido registrado. Contraseña: ${generatedPassword}`,
-        duration: 8000,
+        description: `${formData.nombre} ${formData.apellido} - Correo: ${correoFinal} - Contraseña: ${generatedPassword}`,
+        duration: 10000,
       })
 
       // Reset form
       setFormData({
         nombre: "",
         apellido: "",
-        email: "",
+        correo: "",
         dni: "",
-        telefono: "",
-        rol: "paciente",
-        tipo_asegurado: "asegurado",
+        rol: "Paciente",
+        fecha_nacimiento: "",
         especialidad: "",
-        colegiatura: "",
+        max_pacientes_dia: "20",
       })
       setGeneratedPassword("")
     } catch (error) {
@@ -208,7 +197,7 @@ export function RegistrarUsuario() {
 
   return (
     <Card className="shadow-lg">
-      <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10">
+      <CardHeader className="bg-linear-to-r from-primary/5 to-primary/10">
         <CardTitle className="flex items-center gap-2 text-2xl">
           <UserPlus className="w-6 h-6" />
           Registrar Nuevo Usuario
@@ -238,9 +227,9 @@ export function RegistrarUsuario() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="paciente">👤 Paciente</SelectItem>
-                  <SelectItem value="medico">🩺 Médico</SelectItem>
-                  <SelectItem value="asistente">👩‍⚕️ Asistente de Enfermería</SelectItem>
+                  <SelectItem value="Paciente">👤 Paciente</SelectItem>
+                  <SelectItem value="Medico">🩺 Médico</SelectItem>
+                  <SelectItem value="AsistenteEnfermeria">👩‍⚕️ Asistente de Enfermería</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -287,7 +276,7 @@ export function RegistrarUsuario() {
           </div>
 
           {/* Identificación según rol */}
-          {formData.rol === "paciente" && (
+          {formData.rol === "Paciente" && (
             <div className="space-y-4">
               <div className="flex items-center gap-2 pb-2 border-b">
                 <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
@@ -297,19 +286,33 @@ export function RegistrarUsuario() {
                   Identificación
                 </h3>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="dni" className="text-sm font-medium">
-                  DNI <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="dni"
-                  placeholder="Ej: 12345678"
-                  maxLength={8}
-                  value={formData.dni}
-                  onChange={(e) => setFormData({ ...formData, dni: e.target.value })}
-                  className="h-11"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="dni" className="text-sm font-medium">
+                    DNI <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="dni"
+                    placeholder="Ej: 12345678"
+                    maxLength={8}
+                    value={formData.dni}
+                    onChange={(e) => setFormData({ ...formData, dni: e.target.value })}
+                    className="h-11"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="fecha_nacimiento" className="text-sm font-medium">
+                    Fecha de Nacimiento
+                  </Label>
+                  <Input
+                    id="fecha_nacimiento"
+                    type="date"
+                    value={formData.fecha_nacimiento}
+                    onChange={(e) => setFormData({ ...formData, fecha_nacimiento: e.target.value })}
+                    className="h-11"
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -325,39 +328,30 @@ export function RegistrarUsuario() {
               </h3>
             </div>
 
-            {(formData.rol === "medico" || formData.rol === "asistente") && (
-              <div className="space-y-2">
-                <Label htmlFor="email" className="text-sm font-medium">
-                  Correo Electrónico <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="Ej: usuario@essalud.gob.pe"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="h-11"
-                  required
-                />
-              </div>
-            )}
-
             <div className="space-y-2">
-              <Label htmlFor="telefono" className="text-sm font-medium">
-                Teléfono {(formData.rol === "medico" || formData.rol === "asistente") ? "" : "(Opcional)"}
+              <Label htmlFor="correo" className="text-sm font-medium">
+                Correo Electrónico {(formData.rol === "Medico" || formData.rol === "AsistenteEnfermeria") && <span className="text-destructive">*</span>}
+                {formData.rol === "Paciente" && <span className="text-muted-foreground text-xs ml-2">(se generará automáticamente si no se ingresa)</span>}
               </Label>
               <Input
-                id="telefono"
-                placeholder="Ej: 987654321"
-                value={formData.telefono}
-                onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+                id="correo"
+                type="email"
+                placeholder={formData.rol === "Paciente" ? "Opcional - Se generará automáticamente" : "Ej: usuario@essalud.gob.pe"}
+                value={formData.correo}
+                onChange={(e) => setFormData({ ...formData, correo: e.target.value })}
                 className="h-11"
+                required={formData.rol === "Medico" || formData.rol === "AsistenteEnfermeria"}
               />
+              {formData.rol === "Paciente" && !formData.correo && formData.dni && (
+                <p className="text-xs text-muted-foreground">
+                  Se usará: <strong>paciente{formData.dni}@hospital.com</strong>
+                </p>
+              )}
             </div>
           </div>
 
           {/* Información Profesional - Solo para médicos */}
-          {formData.rol === "medico" && (
+          {formData.rol === "Medico" && (
             <div className="space-y-4">
               <div className="flex items-center gap-2 pb-2 border-b">
                 <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
@@ -380,29 +374,27 @@ export function RegistrarUsuario() {
                       <SelectValue placeholder="Seleccionar especialidad" />
                     </SelectTrigger>
                     <SelectContent>
-                      {especialidades.length > 0 ? (
-                        especialidades.map((esp) => (
-                          <SelectItem key={esp.id} value={esp.id.toString()}>
-                            {esp.nombre}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value="0" disabled>
-                          Cargando especialidades...
-                        </SelectItem>
-                      )}
+                      <SelectItem value="Cardiología">Cardiología</SelectItem>
+                      <SelectItem value="Pediatría">Pediatría</SelectItem>
+                      <SelectItem value="Neurología">Neurología</SelectItem>
+                      <SelectItem value="Traumatología">Traumatología</SelectItem>
+                      <SelectItem value="Medicina General">Medicina General</SelectItem>
+                      <SelectItem value="Ginecología">Ginecología</SelectItem>
+                      <SelectItem value="Oftalmología">Oftalmología</SelectItem>
+                      <SelectItem value="Dermatología">Dermatología</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="colegiatura" className="text-sm font-medium">
-                    Número de Colegiatura <span className="text-destructive">*</span>
+                  <Label htmlFor="max_pacientes" className="text-sm font-medium">
+                    Máximo Pacientes por Día
                   </Label>
                   <Input
-                    id="colegiatura"
-                    placeholder="Ej: CMP-12345"
-                    value={formData.colegiatura}
-                    onChange={(e) => setFormData({ ...formData, colegiatura: e.target.value })}
+                    id="max_pacientes"
+                    type="number"
+                    placeholder="Ej: 20"
+                    value={formData.max_pacientes_dia}
+                    onChange={(e) => setFormData({ ...formData, max_pacientes_dia: e.target.value })}
                     className="h-11"
                   />
                 </div>

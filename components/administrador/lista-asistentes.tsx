@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase/client"
-import { UserCog, Search, Mail, Phone, Calendar, Plus, Edit2, Trash2 } from "lucide-react"
+import { UserCog, Search, Mail, Plus, Edit2, Trash2 } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -30,8 +30,7 @@ export function ListaAsistentes() {
     nombre: "",
     apellido: "",
     dni: "",
-    email: "",
-    telefono: "",
+    correo: "",
   })
 
   useEffect(() => {
@@ -42,10 +41,9 @@ export function ListaAsistentes() {
     setLoading(true)
     const supabase = createClient()
     const { data, error } = await supabase
-      .from("usuarios")
+      .from("usuario")
       .select("*")
-      .eq("rol", "asistente_enfermeria")
-      .order("created_at", { ascending: false })
+      .eq("rol", "AsistenteEnfermeria")
 
     if (!error && data) {
       setAsistentes(data)
@@ -58,7 +56,7 @@ export function ListaAsistentes() {
   }
 
   const handleSaveAsistente = async () => {
-    if (!formData.nombre || !formData.apellido || !formData.dni || !formData.email) {
+    if (!formData.nombre || !formData.apellido || !formData.dni || !formData.correo) {
       toast({
         title: "Campos Incompletos",
         description: "Por favor completa todos los campos requeridos",
@@ -68,20 +66,19 @@ export function ListaAsistentes() {
     }
 
     const supabase = createClient()
-    const password = editingAsistente ? editingAsistente.password_hash : generatePassword(formData.nombre, formData.apellido)
+    const password = editingAsistente ? editingAsistente.password : generatePassword(formData.nombre, formData.apellido)
 
     if (editingAsistente) {
       // Editar asistente existente
       const { error } = await supabase
-        .from("usuarios")
+        .from("usuario")
         .update({
           nombre: formData.nombre,
           apellido: formData.apellido,
           dni: formData.dni,
-          email: formData.email,
-          telefono: formData.telefono,
+          correo: formData.correo,
         })
-        .eq("id", editingAsistente.id)
+        .eq("id_usuario", editingAsistente.id_usuario)
 
       if (!error) {
         toast({
@@ -100,15 +97,14 @@ export function ListaAsistentes() {
       }
     } else {
       // Crear nuevo asistente
-      const { error } = await supabase.from("usuarios").insert([
+      const { error } = await supabase.from("usuario").insert([
         {
           nombre: formData.nombre,
           apellido: formData.apellido,
           dni: formData.dni,
-          email: formData.email,
-          telefono: formData.telefono,
-          password_hash: password,
-          rol: "asistente_enfermeria",
+          correo: formData.correo,
+          password: password,
+          rol: "AsistenteEnfermeria",
         },
       ])
 
@@ -137,17 +133,16 @@ export function ListaAsistentes() {
       nombre: asistente.nombre,
       apellido: asistente.apellido,
       dni: asistente.dni,
-      email: asistente.email,
-      telefono: asistente.telefono || "",
+      correo: asistente.correo,
     })
     setOpenDialog(true)
   }
 
-  const handleDeleteAsistente = async (id: string) => {
+  const handleDeleteAsistente = async (id: number) => {
     if (!confirm("¿Estás seguro de que deseas eliminar este asistente? Esta acción no se puede deshacer.")) return
 
     const supabase = createClient()
-    const { error } = await supabase.from("usuarios").delete().eq("id", id)
+    const { error } = await supabase.from("usuario").delete().eq("id_usuario", id)
 
     if (!error) {
       toast({
@@ -169,8 +164,7 @@ export function ListaAsistentes() {
       nombre: "",
       apellido: "",
       dni: "",
-      email: "",
-      telefono: "",
+      correo: "",
     })
     setEditingAsistente(null)
   }
@@ -180,7 +174,7 @@ export function ListaAsistentes() {
       a.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
       a.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
       a.dni.includes(searchTerm) ||
-      (a.email && a.email.toLowerCase().includes(searchTerm.toLowerCase())),
+      (a.correo && a.correo.toLowerCase().includes(searchTerm.toLowerCase())),
   )
 
   if (loading) {
@@ -293,22 +287,10 @@ export function ListaAsistentes() {
                       id="email"
                       type="email"
                       placeholder="Ej: asistente@essalud.gob.pe"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      value={formData.correo}
+                      onChange={(e) => setFormData({ ...formData, correo: e.target.value })}
                       className="h-11"
                       required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="telefono" className="text-sm font-medium">
-                      Teléfono
-                    </Label>
-                    <Input
-                      id="telefono"
-                      placeholder="Ej: 987654321"
-                      value={formData.telefono}
-                      onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-                      className="h-11"
                     />
                   </div>
                 </div>
@@ -364,18 +346,16 @@ export function ListaAsistentes() {
                     <TableHead>DNI</TableHead>
                     <TableHead>Correo Electrónico</TableHead>
                     <TableHead>Contraseña</TableHead>
-                    <TableHead>Teléfono</TableHead>
-                    <TableHead>Fecha de Registro</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead>Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredAsistentes.map((asistente) => (
-                    <TableRow key={asistente.id}>
+                    <TableRow key={asistente.id_usuario}>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
+                          <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center shrink-0">
                             <UserCog className="w-4 h-4 text-primary" />
                           </div>
                           <div>
@@ -387,35 +367,17 @@ export function ListaAsistentes() {
                       </TableCell>
                       <TableCell>{asistente.dni}</TableCell>
                       <TableCell>
-                        {asistente.email ? (
+                        {asistente.correo ? (
                           <div className="flex items-center gap-1">
                             <Mail className="w-3 h-3 text-muted-foreground" />
-                            <span className="text-sm text-muted-foreground">{asistente.email}</span>
+                            <span className="text-sm text-muted-foreground">{asistente.correo}</span>
                           </div>
                         ) : (
                           <span className="text-sm text-muted-foreground">-</span>
                         )}
                       </TableCell>
                       <TableCell className="font-mono text-sm bg-muted/50 rounded px-2 py-1">
-                        {asistente.password_hash}
-                      </TableCell>
-                      <TableCell>
-                        {asistente.telefono ? (
-                          <div className="flex items-center gap-1">
-                            <Phone className="w-3 h-3 text-muted-foreground" />
-                            <span className="text-sm text-muted-foreground">{asistente.telefono}</span>
-                          </div>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-muted-foreground" />
-                          <span className="text-sm text-muted-foreground">
-                            {new Date(asistente.created_at).toLocaleDateString("es-PE")}
-                          </span>
-                        </div>
+                        {asistente.password}
                       </TableCell>
                       <TableCell>
                         <Badge variant="secondary">Activo</Badge>
@@ -434,7 +396,7 @@ export function ListaAsistentes() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleDeleteAsistente(asistente.id)}
+                            onClick={() => handleDeleteAsistente(asistente.id_usuario)}
                             className="gap-1 text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors"
                           >
                             <Trash2 className="w-3 h-3" />

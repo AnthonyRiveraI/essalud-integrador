@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase/client"
-import { Users, Search, Stethoscope, Mail, Phone, Plus, Edit2, Trash2 } from "lucide-react"
+import { Users, Search, Stethoscope, Mail, Plus, Edit2, Trash2 } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -23,7 +23,6 @@ import { useToast } from "@/hooks/use-toast"
 export function ListaMedicos() {
   const { toast } = useToast()
   const [medicos, setMedicos] = useState<any[]>([])
-  const [especialidades, setEspecialidades] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [openDialog, setOpenDialog] = useState(false)
@@ -32,41 +31,47 @@ export function ListaMedicos() {
     nombre: "",
     apellido: "",
     dni: "",
-    email: "",
-    telefono: "",
-    especialidad_id: "",
-    numero_colegiatura: "",
+    correo: "",
+    especialidad: "",
+    max_pacientes_dia: "20",
   })
 
   useEffect(() => {
     loadMedicos()
-    loadEspecialidades()
   }, [])
 
   const loadMedicos = async () => {
     setLoading(true)
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from("medicos")
-      .select(
-        `
-        *,
-        usuario:usuarios!medicos_usuario_id_fkey(nombre, apellido, email, telefono, dni, password_hash),
-        especialidad:especialidades!medicos_especialidad_id_fkey(nombre)
-      `,
-      )
-      .order("created_at", { ascending: false })
+    
+    // Cargar todos los médicos
+    const { data: medicosData, error: medicosError } = await supabase
+      .from("medico")
+      .select("*")
 
-    if (!error && data) {
-      setMedicos(data)
+    if (medicosError || !medicosData) {
+      setLoading(false)
+      return
     }
-    setLoading(false)
-  }
 
-  const loadEspecialidades = async () => {
-    const supabase = createClient()
-    const { data } = await supabase.from("especialidades").select("*").order("nombre")
-    if (data) setEspecialidades(data)
+    // Obtener datos de usuario para cada médico
+    const medicosConUsuario = await Promise.all(
+      medicosData.map(async (medico) => {
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("id_usuario, nombre, apellido, dni, correo, password, rol")
+          .eq("id_usuario", medico.id_medico)
+          .single()
+
+        return {
+          ...medico,
+          usuario: usuarioData || {},
+        }
+      })
+    )
+
+    setMedicos(medicosConUsuario)
+    setLoading(false)
   }
 
   const generatePassword = (nombre: string, apellido: string) => {
@@ -74,7 +79,7 @@ export function ListaMedicos() {
   }
 
   const handleSaveMedico = async () => {
-    if (!formData.nombre || !formData.apellido || !formData.dni || !formData.email || !formData.especialidad_id) {
+    if (!formData.nombre || !formData.apellido || !formData.dni || !formData.correo || !formData.especialidad) {
       toast({
         title: "Campos Incompletos",
         description: "Por favor completa todos los campos requeridos",
@@ -85,29 +90,28 @@ export function ListaMedicos() {
 
     const supabase = createClient()
     const password = editingMedico
-      ? editingMedico.usuario.password_hash
+      ? editingMedico.usuario.password
       : generatePassword(formData.nombre, formData.apellido)
 
     if (editingMedico) {
       // Editar médico existente
       const { error: updateError } = await supabase
-        .from("usuarios")
+        .from("usuario")
         .update({
           nombre: formData.nombre,
           apellido: formData.apellido,
           dni: formData.dni,
-          email: formData.email,
-          telefono: formData.telefono,
+          correo: formData.correo,
         })
-        .eq("id", editingMedico.usuario_id)
+        .eq("id_usuario", editingMedico.id_medico)
 
       const { error: medicoError } = await supabase
-        .from("medicos")
+        .from("medico")
         .update({
-          especialidad_id: formData.especialidad_id,
-          numero_colegiatura: formData.numero_colegiatura,
+          especialidad: formData.especialidad,
+          max_pacientes_dia: parseInt(formData.max_pacientes_dia),
         })
-        .eq("id", editingMedico.id)
+        .eq("id_medico", editingMedico.id_medico)
 
       if (!updateError && !medicoError) {
         toast({
@@ -127,28 +131,25 @@ export function ListaMedicos() {
     } else {
       // Crear nuevo médico
       const { data: userData, error: userError } = await supabase
-        .from("usuarios")
+        .from("usuario")
         .insert([
           {
             nombre: formData.nombre,
             apellido: formData.apellido,
             dni: formData.dni,
-            email: formData.email,
-            telefono: formData.telefono,
-            password_hash: password,
-            rol: "medico",
+            correo: formData.correo,
+            password: password,
+            rol: "Medico",
           },
         ])
         .select()
 
       if (!userError && userData) {
-        const { error: medicoError } = await supabase.from("medicos").insert([
+        const { error: medicoError } = await supabase.from("medico").insert([
           {
-            usuario_id: userData[0].id,
-            especialidad_id: parseInt(formData.especialidad_id),
-            numero_colegiatura: formData.numero_colegiatura,
-            max_citas_dia: 20,
-            minutos_por_cita: 30,
+            id_medico: userData[0].id_usuario,
+            especialidad: formData.especialidad,
+            max_pacientes_dia: parseInt(formData.max_pacientes_dia),
           },
         ])
 
@@ -184,22 +185,21 @@ export function ListaMedicos() {
       nombre: medico.usuario.nombre,
       apellido: medico.usuario.apellido,
       dni: medico.usuario.dni,
-      email: medico.usuario.email,
-      telefono: medico.usuario.telefono || "",
-      especialidad_id: medico.especialidad_id,
-      numero_colegiatura: medico.numero_colegiatura,
+      correo: medico.usuario.correo,
+      especialidad: medico.especialidad,
+      max_pacientes_dia: medico.max_pacientes_dia?.toString() || "20",
     })
     setOpenDialog(true)
   }
 
-  const handleDeleteMedico = async (medicoId: string, usuarioId: string) => {
+  const handleDeleteMedico = async (medicoId: number) => {
     if (!confirm("¿Estás seguro de que deseas eliminar este médico? Esta acción no se puede deshacer.")) return
 
     const supabase = createClient()
-    const { error: medicoError } = await supabase.from("medicos").delete().eq("id", medicoId)
-    const { error: userError } = await supabase.from("usuarios").delete().eq("id", usuarioId)
+    // Solo eliminar de usuario - cascade eliminará de medico
+    const { error } = await supabase.from("usuario").delete().eq("id_usuario", medicoId)
 
-    if (!medicoError && !userError) {
+    if (!error) {
       toast({
         title: "✅ Médico Eliminado",
         description: "El médico ha sido eliminado del sistema",
@@ -219,21 +219,19 @@ export function ListaMedicos() {
       nombre: "",
       apellido: "",
       dni: "",
-      email: "",
-      telefono: "",
-      especialidad_id: "",
-      numero_colegiatura: "",
+      correo: "",
+      especialidad: "",
+      max_pacientes_dia: "20",
     })
     setEditingMedico(null)
   }
 
   const filteredMedicos = medicos.filter(
     (m) =>
-      m.usuario.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.usuario.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.usuario.dni.includes(searchTerm) ||
-      m.especialidad.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.numero_colegiatura.toLowerCase().includes(searchTerm.toLowerCase()),
+      m.usuario?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      m.usuario?.apellido?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      m.usuario?.dni?.includes(searchTerm) ||
+      m.especialidad?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
   if (loading) {
@@ -339,29 +337,17 @@ export function ListaMedicos() {
                     Información de Contacto
                   </h3>
                   <div className="space-y-2">
-                    <Label htmlFor="email" className="text-sm font-medium">
+                    <Label htmlFor="correo" className="text-sm font-medium">
                       Correo Electrónico <span className="text-destructive">*</span>
                     </Label>
                     <Input
-                      id="email"
+                      id="correo"
                       type="email"
                       placeholder="Ej: jperez@essalud.gob.pe"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      value={formData.correo}
+                      onChange={(e) => setFormData({ ...formData, correo: e.target.value })}
                       className="h-11"
                       required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="telefono" className="text-sm font-medium">
-                      Teléfono
-                    </Label>
-                    <Input
-                      id="telefono"
-                      placeholder="Ej: 987654321"
-                      value={formData.telefono}
-                      onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-                      className="h-11"
                     />
                   </div>
                 </div>
@@ -376,32 +362,35 @@ export function ListaMedicos() {
                       Especialidad <span className="text-destructive">*</span>
                     </Label>
                     <Select
-                      value={formData.especialidad_id}
-                      onValueChange={(value) => setFormData({ ...formData, especialidad_id: value })}
+                      value={formData.especialidad}
+                      onValueChange={(value) => setFormData({ ...formData, especialidad: value })}
                     >
                       <SelectTrigger id="especialidad" className="h-11">
                         <SelectValue placeholder="Selecciona una especialidad" />
                       </SelectTrigger>
                       <SelectContent>
-                        {especialidades.map((esp) => (
-                          <SelectItem key={esp.id} value={esp.id.toString()}>
-                            {esp.nombre}
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="Cardiología">Cardiología</SelectItem>
+                        <SelectItem value="Pediatría">Pediatría</SelectItem>
+                        <SelectItem value="Neurología">Neurología</SelectItem>
+                        <SelectItem value="Traumatología">Traumatología</SelectItem>
+                        <SelectItem value="Medicina General">Medicina General</SelectItem>
+                        <SelectItem value="Ginecología">Ginecología</SelectItem>
+                        <SelectItem value="Oftalmología">Oftalmología</SelectItem>
+                        <SelectItem value="Dermatología">Dermatología</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="colegiatura" className="text-sm font-medium">
-                      Número de Colegiatura <span className="text-destructive">*</span>
+                    <Label htmlFor="max_pacientes" className="text-sm font-medium">
+                      Máximo de Pacientes por Día
                     </Label>
                     <Input
-                      id="colegiatura"
-                      placeholder="Ej: CMP-12345"
-                      value={formData.numero_colegiatura}
-                      onChange={(e) => setFormData({ ...formData, numero_colegiatura: e.target.value })}
+                      id="max_pacientes"
+                      type="number"
+                      placeholder="Ej: 20"
+                      value={formData.max_pacientes_dia}
+                      onChange={(e) => setFormData({ ...formData, max_pacientes_dia: e.target.value })}
                       className="h-11"
-                      required
                     />
                   </div>
                 </div>
@@ -456,58 +445,42 @@ export function ListaMedicos() {
                     <TableHead>Médico</TableHead>
                     <TableHead>DNI</TableHead>
                     <TableHead>Especialidad</TableHead>
-                    <TableHead>Colegiatura</TableHead>
                     <TableHead>Contraseña</TableHead>
-                    <TableHead>Contacto</TableHead>
-                    <TableHead>Citas/Día</TableHead>
-                    <TableHead>Min/Cita</TableHead>
+                    <TableHead>Correo</TableHead>
+                    <TableHead>Max Pacientes/Día</TableHead>
                     <TableHead>Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredMedicos.map((medico) => (
-                    <TableRow key={medico.id}>
+                    <TableRow key={medico.id_medico}>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
+                          <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center shrink-0">
                             <Stethoscope className="w-4 h-4 text-primary" />
                           </div>
                           <div>
                             <p className="font-medium">
-                              Dr(a). {medico.usuario.nombre} {medico.usuario.apellido}
+                              Dr(a). {medico.usuario?.nombre} {medico.usuario?.apellido}
                             </p>
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell>{medico.usuario.dni}</TableCell>
+                      <TableCell>{medico.usuario?.dni}</TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{medico.especialidad.nombre}</Badge>
+                        <Badge variant="secondary">{medico.especialidad}</Badge>
                       </TableCell>
-                      <TableCell className="font-mono text-sm">{medico.numero_colegiatura}</TableCell>
                       <TableCell className="font-mono text-sm bg-muted/50 rounded px-2 py-1">
-                        {medico.usuario.password_hash}
+                        {medico.usuario?.password}
                       </TableCell>
                       <TableCell>
-                        <div className="space-y-1 text-sm">
-                          {medico.usuario.email && (
-                            <div className="flex items-center gap-1">
-                              <Mail className="w-3 h-3 text-muted-foreground" />
-                              <span className="text-muted-foreground">{medico.usuario.email}</span>
-                            </div>
-                          )}
-                          {medico.usuario.telefono && (
-                            <div className="flex items-center gap-1">
-                              <Phone className="w-3 h-3 text-muted-foreground" />
-                              <span className="text-muted-foreground">{medico.usuario.telefono}</span>
-                            </div>
-                          )}
+                        <div className="flex items-center gap-1">
+                          <Mail className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-muted-foreground text-sm">{medico.usuario?.correo}</span>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{medico.max_citas_dia}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{medico.minutos_por_cita} min</Badge>
+                        <Badge variant="outline">{medico.max_pacientes_dia || 20}</Badge>
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
@@ -523,7 +496,7 @@ export function ListaMedicos() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleDeleteMedico(medico.id, medico.usuario_id)}
+                            onClick={() => handleDeleteMedico(medico.id_medico)}
                             className="gap-1 text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors"
                           >
                             <Trash2 className="w-3 h-3" />

@@ -31,7 +31,7 @@ export default function AsistenteLoginPage() {
         password: formData.password,
       })
 
-      if (usuario.rol !== "asistente_enfermeria") {
+      if (usuario.rol !== "AsistenteEnfermeria") {
         toast({
           title: "Usuario no registrado",
           description: "Las credenciales ingresadas no corresponden a un asistente de enfermería registrado",
@@ -46,6 +46,7 @@ export default function AsistenteLoginPage() {
         title: "Bienvenido",
         description: `${usuario.nombre} ${usuario.apellido}`,
       })
+      
       router.push("/asistente/dashboard")
     } catch (error) {
       toast({
@@ -53,7 +54,6 @@ export default function AsistenteLoginPage() {
         description: "Las credenciales ingresadas no son válidas",
         variant: "destructive",
       })
-    } finally {
       setLoading(false)
     }
   }
