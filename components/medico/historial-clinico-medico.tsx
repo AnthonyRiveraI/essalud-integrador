@@ -215,7 +215,9 @@ export function HistorialClinicoMedico({ medicoId, especialidad }: HistorialClin
     loadHistorial()
   }
 
-  const filteredHistorial = searchDni ? historial.filter((h) => h.paciente.dni.includes(searchDni)) : historial
+  const filteredHistorial = searchDni 
+  ? historial.filter((h) => h.paciente?.dni && String(h.paciente.dni).includes(searchDni)) 
+  : historial
   
   console.log('📋 Mostrando historiales:', {
     totalHistoriales: historial.length,
