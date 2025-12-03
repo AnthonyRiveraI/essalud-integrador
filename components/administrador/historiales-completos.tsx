@@ -4,17 +4,24 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
-import { FileText, Search, Calendar, User, Stethoscope, Pill, Download } from "lucide-react"
+import { FileText, Search, Calendar, User, Stethoscope, Pill, FileSpreadsheet, Filter } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useToast } from "@/hooks/use-toast"
+import * as XLSX from 'xlsx'
 
 export function HistorialesCompletos() {
   const { toast } = useToast()
   const [historial, setHistorial] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
-  const [downloadingPaciente, setDownloadingPaciente] = useState<string | null>(null)
+  const [downloadingAll, setDownloadingAll] = useState(false)
+  
+  // Filtros de fecha
+  const [fechaInicio, setFechaInicio] = useState("")
+  const [fechaFin, setFechaFin] = useState("")
+  const [showFilters, setShowFilters] = useState(false)
 
   useEffect(() => {
     loadHistorial()
@@ -28,7 +35,8 @@ export function HistorialesCompletos() {
     const { data: historialData, error: historialError } = await supabase
       .from("historialclinico")
       .select("*")
-      .limit(200)
+      .order('fecha', { ascending: false })
+      .limit(500)
 
     if (historialError || !historialData) {
       setLoading(false)
@@ -38,13 +46,13 @@ export function HistorialesCompletos() {
     // Obtener datos de pacientes y médicos para cada historial
     const historialConDatos = await Promise.all(
       historialData.map(async (registro) => {
-        const { data: pacienteData, error: pacienteError } = await supabase
+        const { data: pacienteData } = await supabase
           .from("usuario")
           .select("id_usuario, nombre, apellido, dni, correo")
           .eq("id_usuario", registro.id_paciente)
           .maybeSingle()
 
-        const { data: medicoData, error: medicoError } = await supabase
+        const { data: medicoData } = await supabase
           .from("usuario")
           .select("id_usuario, nombre, apellido, correo")
           .eq("id_usuario", registro.id_medico)
@@ -62,7 +70,7 @@ export function HistorialesCompletos() {
           medico: medicoData ? {
             ...medicoData,
             especialidad: medicoInfo?.especialidad || "General",
-          } : { nombre: "Médico eliminado", apellido: "", correo: "N/A" },
+          } : { nombre: "Médico eliminado", apellido: "", correo: "N/A", especialidad: "N/A" },
         }
       })
     )
@@ -71,104 +79,91 @@ export function HistorialesCompletos() {
     setLoading(false)
   }
 
-  const downloadHistorialPaciente = async (pacienteId: number, pacienteNombre: string) => {
-    setDownloadingPaciente(pacienteId.toString())
+  const downloadAllAsExcel = async () => {
+    setDownloadingAll(true)
     try {
-      const supabase = createClient()
-      const { data: historialData, error } = await supabase
-        .from("historialclinico")
-        .select("*")
-        .eq("id_paciente", pacienteId)
+      // Filtrar data según rango de fechas
+      let dataToExport = filteredHistorial
 
-      if (error || !historialData) {
-        toast({
-          title: "❌ Error al descargar",
-          description: "No se pudo descargar el historial del paciente",
-          variant: "destructive",
-        })
-        return
+      // Preparar datos para Excel
+      const excelData = dataToExport.map((registro, index) => ({
+        'N°': index + 1,
+        'Fecha': new Date(registro.fecha).toLocaleString('es-PE', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        }),
+        'ID Paciente': registro.id_paciente,
+        'Paciente': `${registro.paciente.nombre} ${registro.paciente.apellido}`,
+        'DNI Paciente': registro.paciente.dni,
+        'Correo Paciente': registro.paciente.correo || '-',
+        'Médico': `Dr(a). ${registro.medico.nombre} ${registro.medico.apellido}`,
+        'Especialidad': registro.medico.especialidad,
+        'Diagnóstico': registro.diagnostico,
+        'Receta Médica': registro.receta || 'No aplica',
+      }))
+
+      // Crear libro de trabajo
+      const wb = XLSX.utils.book_new()
+      
+      // Crear hoja con los datos
+      const ws = XLSX.utils.json_to_sheet(excelData)
+
+      // Ajustar ancho de columnas
+      const columnWidths = [
+        { wch: 5 },  // N°
+        { wch: 18 }, // Fecha
+        { wch: 12 }, // ID Paciente
+        { wch: 25 }, // Paciente
+        { wch: 12 }, // DNI
+        { wch: 30 }, // Correo
+        { wch: 25 }, // Médico
+        { wch: 20 }, // Especialidad
+        { wch: 50 }, // Diagnóstico
+        { wch: 50 }, // Receta
+      ]
+      ws['!cols'] = columnWidths
+
+      // Agregar hoja al libro
+      XLSX.utils.book_append_sheet(wb, ws, 'Historiales Clínicos')
+
+      // Generar nombre del archivo
+      let fileName = 'Historiales_Completos'
+      if (fechaInicio && fechaFin) {
+        fileName += `_${fechaInicio}_a_${fechaFin}`
       }
-
-      // Obtener datos completos para cada registro
-      const data = await Promise.all(
-        historialData.map(async (registro) => {
-          const { data: pacienteData } = await supabase
-            .from("usuario")
-            .select("id_usuario, nombre, apellido, dni, correo")
-            .eq("id_usuario", registro.id_paciente)
-            .maybeSingle()
-
-          const { data: medicoData } = await supabase
-            .from("usuario")
-            .select("id_usuario, nombre, apellido")
-            .eq("id_usuario", registro.id_medico)
-            .maybeSingle()
-
-          const { data: medicoInfo } = await supabase
-            .from("medico")
-            .select("especialidad")
-            .eq("id_medico", registro.id_medico)
-            .maybeSingle()
-
-          return {
-            ...registro,
-            paciente: pacienteData || { nombre: "Usuario eliminado", apellido: "", dni: "N/A", correo: "N/A" },
-            medico: medicoData || { nombre: "Médico eliminado", apellido: "" },
-            especialidad: medicoInfo?.especialidad || "General",
-          }
-        })
-      )
-
-      let csvContent = ""
-      csvContent += "HISTORIAL CLÍNICO DEL PACIENTE\n"
-      csvContent += "=".repeat(80) + "\n\n"
-      csvContent += `DATOS DEL PACIENTE\n`
-      csvContent += "-".repeat(80) + "\n"
-      csvContent += `Nombre Completo: ${data[0].paciente.nombre} ${data[0].paciente.apellido}\n`
-      csvContent += `DNI: ${data[0].paciente.dni}\n`
-      csvContent += `Correo: ${data[0].paciente.correo || "-"}\n`
-      csvContent += `Fecha de Descarga: ${new Date().toLocaleDateString("es-PE")} ${new Date().toLocaleTimeString("es-PE")}\n`
-      csvContent += `Total de Registros: ${data.length}\n\n`
-
-      csvContent += "REGISTROS MÉDICOS\n"
-      csvContent += "-".repeat(80) + "\n\n"
-
-      data.forEach((registro: any, index: number) => {
-        csvContent += `REGISTRO ${index + 1}\n`
-        csvContent += `Fecha: ${new Date(registro.fecha).toLocaleDateString("es-PE")} ${new Date(registro.fecha).toLocaleTimeString("es-PE")}\n`
-        csvContent += `Especialidad: ${registro.especialidad}\n`
-        csvContent += `Médico: Dr(a). ${registro.medico.nombre} ${registro.medico.apellido}\n`
-        csvContent += `Diagnóstico: ${registro.diagnostico}\n`
-        csvContent += `Receta Médica: ${registro.receta || "No aplica"}\n`
-        csvContent += "-".repeat(80) + "\n\n"
-      })
+      fileName += `_${new Date().toISOString().split('T')[0]}.xlsx`
 
       // Descargar archivo
-      const element = document.createElement("a")
-      element.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(csvContent))
-      element.setAttribute("download", `Historial_${pacienteNombre.replace(/\s+/g, "_")}_${new Date().getTime()}.csv`)
-      element.style.display = "none"
-      document.body.appendChild(element)
-      element.click()
-      document.body.removeChild(element)
+      XLSX.writeFile(wb, fileName)
 
       toast({
-        title: "✅ Descarga completada",
-        description: `Historial de ${pacienteNombre} descargado exitosamente`,
+        title: "✅ Exportación exitosa",
+        description: `${dataToExport.length} registros exportados a Excel`,
       })
     } catch (error) {
-      console.error("[v0] Error descargando historial:", error)
+      console.error("Error exportando a Excel:", error)
       toast({
-        title: "❌ Error al descargar",
-        description: "No se pudo descargar el historial. Intenta nuevamente.",
+        title: "❌ Error al exportar",
+        description: "No se pudo generar el archivo Excel",
         variant: "destructive",
       })
     } finally {
-      setDownloadingPaciente(null)
+      setDownloadingAll(false)
     }
   }
 
-  const filteredHistorial = historial.filter(
+
+  const clearFilters = () => {
+    setFechaInicio("")
+    setFechaFin("")
+    setSearchTerm("")
+  }
+
+  // Aplicar filtros
+  let filteredHistorial = historial.filter(
     (h) =>
       h.paciente?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       h.paciente?.apellido?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -179,19 +174,20 @@ export function HistorialesCompletos() {
       h.diagnostico?.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
-  // Agrupar por paciente para mostrar botón de descarga
-  const pacientesPorHistorial = new Map()
-  filteredHistorial.forEach((h) => {
-    if (!pacientesPorHistorial.has(h.id_paciente)) {
-      pacientesPorHistorial.set(h.id_paciente, {
-        id: h.id_paciente,
-        nombre: `${h.paciente.nombre} ${h.paciente.apellido}`,
-        dni: h.paciente.dni,
-        registros: [],
-      })
-    }
-    pacientesPorHistorial.get(h.id_paciente).registros.push(h)
-  })
+  // Filtrar por rango de fechas
+  if (fechaInicio) {
+    filteredHistorial = filteredHistorial.filter(h => {
+      const fechaRegistro = new Date(h.fecha).toISOString().split('T')[0]
+      return fechaRegistro >= fechaInicio
+    })
+  }
+
+  if (fechaFin) {
+    filteredHistorial = filteredHistorial.filter(h => {
+      const fechaRegistro = new Date(h.fecha).toISOString().split('T')[0]
+      return fechaRegistro <= fechaFin
+    })
+  }
 
   if (loading) {
     return (
@@ -217,9 +213,82 @@ export function HistorialesCompletos() {
               <span className="font-semibold text-primary">{historial.length}</span> registros totales
             </CardDescription>
           </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowFilters(!showFilters)}
+              className="gap-2"
+            >
+              <Filter className="w-4 h-4" />
+              {showFilters ? 'Ocultar' : 'Filtros'}
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={downloadAllAsExcel}
+              disabled={downloadingAll || filteredHistorial.length === 0}
+              className="gap-2 bg-green-600 hover:bg-green-700"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              {downloadingAll ? 'Exportando...' : 'Exportar a Excel'}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
+        {/* Filtros */}
+        {showFilters && (
+          <div className="mb-6 p-4 border rounded-lg bg-muted/50">
+            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              Filtrar por Rango de Fechas
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <Label htmlFor="fecha-inicio">Fecha Inicio</Label>
+                <Input
+                  id="fecha-inicio"
+                  type="date"
+                  value={fechaInicio}
+                  onChange={(e) => setFechaInicio(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="fecha-fin">Fecha Fin</Label>
+                <Input
+                  id="fecha-fin"
+                  type="date"
+                  value={fechaFin}
+                  onChange={(e) => setFechaFin(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex items-end">
+                <Button
+                  variant="outline"
+                  onClick={clearFilters}
+                  className="w-full"
+                >
+                  Limpiar Filtros
+                </Button>
+              </div>
+            </div>
+            {(fechaInicio || fechaFin) && (
+              <p className="text-xs text-muted-foreground mt-2">
+                {fechaInicio && fechaFin 
+                  ? `Mostrando registros desde ${new Date(fechaInicio).toLocaleDateString('es-PE')} hasta ${new Date(fechaFin).toLocaleDateString('es-PE')}`
+                  : fechaInicio 
+                  ? `Mostrando registros desde ${new Date(fechaInicio).toLocaleDateString('es-PE')}`
+                  : `Mostrando registros hasta ${new Date(fechaFin).toLocaleDateString('es-PE')}`
+                }
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Búsqueda */}
         <div className="mb-6">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -230,7 +299,7 @@ export function HistorialesCompletos() {
               className="pl-10 h-11"
             />
           </div>
-          {searchTerm && (
+          {(searchTerm || fechaInicio || fechaFin) && (
             <p className="text-sm text-muted-foreground mt-2">
               Mostrando <span className="font-semibold text-primary">{filteredHistorial.length}</span> de{" "}
               {historial.length} registros
@@ -242,6 +311,11 @@ export function HistorialesCompletos() {
           <div className="text-center py-8">
             <FileText className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-muted-foreground">No se encontraron registros</p>
+            {(searchTerm || fechaInicio || fechaFin) && (
+              <Button variant="link" onClick={clearFilters} className="mt-2">
+                Limpiar filtros
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
@@ -257,13 +331,10 @@ export function HistorialesCompletos() {
                     <TableHead>Fecha</TableHead>
                     <TableHead>Diagnóstico</TableHead>
                     <TableHead>Receta Médica</TableHead>
-                    <TableHead>Acción</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredHistorial.map((registro, index) => {
-                    const mostrarBoton =
-                      index === 0 || filteredHistorial[index - 1].id_paciente !== registro.id_paciente
                     return (
                       <TableRow key={registro.id_historial}>
                         <TableCell className="font-mono text-xs">{registro.id_paciente}</TableCell>
@@ -302,25 +373,6 @@ export function HistorialesCompletos() {
                             </div>
                           ) : (
                             <span className="text-sm text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {mostrarBoton && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                downloadHistorialPaciente(
-                                  registro.id_paciente,
-                                  `${registro.paciente.nombre} ${registro.paciente.apellido}`,
-                                )
-                              }
-                              disabled={downloadingPaciente === registro.id_paciente.toString()}
-                              className="gap-1 hover:bg-green-50 hover:text-green-600 hover:border-green-300 transition-colors"
-                            >
-                              <Download className="w-4 h-4" />
-                              {downloadingPaciente === registro.id_paciente.toString() ? "Descargando..." : "Descargar"}
-                            </Button>
                           )}
                         </TableCell>
                       </TableRow>
